@@ -2,7 +2,7 @@ import { build } from 'esbuild'
 import { build as viteBuild } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { mkdir, copyFile } from 'node:fs/promises'
+import { mkdir, copyFile, cp } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
@@ -46,3 +46,4 @@ await viteBuild({
 })
 
 await copyFile(resolve(root, 'extension/manifest.json'), resolve(extensionOut, 'manifest.json'))
+await cp(resolve(root, 'extension/icons'), resolve(extensionOut, 'icons'), { recursive: true })

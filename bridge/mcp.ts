@@ -3,6 +3,7 @@
  *
  * Tools:
  *   monday_read_open_task   – request live capture from extension
+ *   monday_read_task        – capture any task by URL or board+item ID
  *   monday_get_task         – retrieve stored snapshot (optional boardId/itemId)
  *   monday_get_image        – return original image bytes as ImageContent
  *   monday_list_tasks       – list stored snapshots
@@ -60,8 +61,52 @@ function snapshotSummary(s: StoredSnapshot): object {
 
 const mcp = new McpServer({
   name: 'monday-task-bridge',
-  version: '0.1.0',
+  version: '0.3.0',
 })
+
+async function captureVia(path: string, body?: unknown) {
+  try {
+    const adminToken = await getAdminToken()
+    const res = await bridgeFetch(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Bridge-Admin-Token': adminToken,
+      },
+      body: JSON.stringify(body ?? {}),
+    })
+
+    if (!res.ok) {
+      const resBody = await res.json().catch(() => ({})) as Record<string, unknown>
+      const errCode = (resBody.error as string) || `HTTP ${res.status}`
+      if (errCode === 'BROWSER_OFFLINE') {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'BROWSER_OFFLINE', message: 'No browser extension is connected. Ensure the Monday Task Bridge extension is running.' }) }],
+          isError: true,
+        }
+      }
+      if (res.status === 400) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'INVALID_TARGET', message: errCode }) }],
+          isError: true,
+        }
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: errCode, message: 'Failed to capture task' }) }],
+        isError: true,
+      }
+    }
+
+    const data = await res.json()
+    return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error'
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify({ error: 'NO_SNAPSHOT', message: msg }) }],
+      isError: true,
+    }
+  }
+}
 
 // -- monday_read_open_task --------------------------------------------------
 
@@ -70,42 +115,24 @@ mcp.tool(
   'Request the browser extension to capture the currently open Monday.com task. ' +
     'Sends a capture request over WebSocket, waits up to 180s, and returns the snapshot.',
   {},
-  async () => {
-    try {
-      const adminToken = await getAdminToken()
-      const res = await bridgeFetch('/v1/read-open-task', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Bridge-Admin-Token': adminToken,
-        },
-      })
+  async () => captureVia('/v1/read-open-task')
+)
 
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as Record<string, unknown>
-        const errCode = (body.error as string) || `HTTP ${res.status}`
-        if (errCode === 'BROWSER_OFFLINE') {
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'BROWSER_OFFLINE', message: 'No browser extension is connected. Ensure the Monday Task Bridge extension is running.' }) }],
-            isError: true,
-          }
-        }
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ error: errCode, message: 'Failed to capture task' }) }],
-          isError: true,
-        }
-      }
+// -- monday_read_task -------------------------------------------------------
 
-      const data = await res.json()
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error'
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'NO_SNAPSHOT', message: msg }) }],
-        isError: true,
-      }
-    }
-  }
+mcp.tool(
+  'monday_read_task',
+  'Capture any Monday.com task by URL or board+item ID without the user opening it. ' +
+    'The extension loads the task in a background tab of the signed-in Chrome profile, reads it, and closes the tab. ' +
+    'Requires Chrome running with the extension connected (power on). Waits up to 180s.',
+  {
+    url: z.string().optional().describe('Full monday task URL, e.g. https://team.monday.com/boards/123/pulses/456'),
+    boardId: z.string().optional().describe('Monday.com board ID'),
+    itemId: z.string().optional().describe('Monday.com item ID'),
+    accountHost: z.string().optional().describe('e.g. team.monday.com; defaults to the host of the latest cached task'),
+  },
+  async ({ url, boardId, itemId, accountHost }) =>
+    captureVia('/v1/read-task', { url, boardId, itemId, accountHost })
 )
 
 // -- monday_get_task --------------------------------------------------------

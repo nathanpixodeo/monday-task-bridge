@@ -7,11 +7,17 @@ export interface Config {
   expiresAt: string | null
   status: 'disconnected' | 'connecting' | 'connected' | 'authenticated' | 'error' | 'pairing'
   error: string | null
+  /** Power switch: when false the worker stays disconnected and skips auto-sync. */
+  enabled: boolean
+  /** When the current live connection was authenticated; null while not connected. */
+  connectedAt: string | null
   autoSync: boolean
+  capturing: boolean
   pendingOrigins: string[]
   lastCaptureAt: string | null
   lastTaskTitle: string | null
   lastCaptureComplete: boolean | null
+  lastWarnings: string[]
 }
 
 export const defaultConfig: Config = {
@@ -23,11 +29,36 @@ export const defaultConfig: Config = {
   expiresAt: null,
   status: 'disconnected',
   error: null,
+  enabled: true,
+  connectedAt: null,
   autoSync: true,
+  capturing: false,
   pendingOrigins: [],
   lastCaptureAt: null,
   lastTaskTitle: null,
-  lastCaptureComplete: null
+  lastCaptureComplete: null,
+  lastWarnings: []
+}
+
+/** Fields reset when this browser is no longer paired with the bridge. */
+export const unpairedFields: Partial<Config> = {
+  paired: false,
+  token: null,
+  pairId: null,
+  pairingSecret: null,
+  pairCode: null,
+  expiresAt: null,
+  status: 'disconnected',
+  error: null,
+  // A fresh pairing should come up connected
+  enabled: true,
+  connectedAt: null,
+  capturing: false,
+  pendingOrigins: [],
+  lastCaptureAt: null,
+  lastTaskTitle: null,
+  lastCaptureComplete: null,
+  lastWarnings: []
 }
 
 export async function getConfig(): Promise<Config> {
@@ -35,9 +66,18 @@ export async function getConfig(): Promise<Config> {
   return { ...defaultConfig, ...(result.config || {}) }
 }
 
-export async function setConfig(updates: Partial<Config>): Promise<Config> {
-  const current = await getConfig()
-  const next = { ...current, ...updates }
-  await chrome.storage.local.set({ config: next })
-  return next
+let writeQueue: Promise<unknown> = Promise.resolve()
+
+/**
+ * Merge updates into the stored config. Writes are queued so concurrent
+ * read-modify-write updates in one extension context cannot drop each other.
+ */
+export function setConfig(updates: Partial<Config>): Promise<Config> {
+  const write = writeQueue.then(async () => {
+    const next = { ...(await getConfig()), ...updates }
+    await chrome.storage.local.set({ config: next })
+    return next
+  })
+  writeQueue = write.catch(() => {})
+  return write
 }

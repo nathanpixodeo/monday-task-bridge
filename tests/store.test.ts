@@ -40,3 +40,27 @@ test('snapshot keeps original image bytes and never uses an image ID as a filesy
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('rotating replaces the bridge token and clearPairing forgets the extension', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'monday-bridge-test-'))
+  try {
+    const store = new Store(dir)
+    await store.init()
+    assert.equal(await store.getBridgeToken(), null)
+
+    const first = await store.rotateBridgeToken()
+    assert.equal(await store.getBridgeToken(), first)
+    const second = await store.rotateBridgeToken()
+    assert.notEqual(second, first)
+    assert.equal(await store.getBridgeToken(), second)
+
+    await store.setPairedOrigin(`chrome-extension://${'a'.repeat(32)}`)
+    await store.clearPairing()
+    assert.equal(await store.getBridgeToken(), null)
+    assert.equal(await store.getPairedOrigin(), null)
+    await assert.doesNotReject(store.clearPairing())
+  } finally {
+    assert.ok(resolve(dir).startsWith(resolve(tmpdir()) + sep))
+    await rm(dir, { recursive: true, force: true })
+  }
+})

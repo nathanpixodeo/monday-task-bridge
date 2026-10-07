@@ -32,13 +32,23 @@ npm run build
 npm run bridge
 ```
 
-Leave the bridge terminal running. In Chrome, open `chrome://extensions`, enable **Developer mode**, select **Load unpacked**, and choose this repository's `dist/extension` directory. Open the extension popup and click **Start Pairing**. In a second terminal, run the following command with the six-digit code shown in the popup:
+Leave the bridge terminal running. In Chrome, open `chrome://extensions`, enable **Developer mode**, select **Load unpacked**, and choose this repository's `dist/extension` directory. Open the extension popup. It checks that the bridge is running; tap the power button to pair. The popup shows a six-digit code and the exact command, each with a copy button. In a second terminal, run that command with your code, for example:
 
 ```powershell
 npm run pair -- 123456
 ```
 
-The code expires after two minutes. Once the popup says **CONNECTED**, open a task with a URL containing `/boards/<board-id>/pulses/<item-id>` (an optional `/views/<view-id>` segment is supported). Auto-sync is on by default and can be paused in the popup. If the popup asks for an image host permission, grant it only if you recognize the host, then reopen the task to retry. After a new build, click **Reload** on the extension card in `chrome://extensions`.
+The code expires after two minutes; the popup shows a countdown. Once the popup says **Connected**, open a task with a URL containing `/boards/<board-id>/pulses/<item-id>` (an optional `/views/<view-id>` segment is supported). The power button turns the bridge connection on and off: while off, the extension stays disconnected, auto-sync stops, and MCP captures report `BROWSER_OFFLINE`. Auto-sync is on by default and can be paused in the popup. Use **Capture this task** to capture the open task on demand. If the popup asks for an image host permission, grant it only if you recognize the host, then reopen the task to retry. After a new build, click **Reload** on the extension card in `chrome://extensions`.
+
+The toolbar icon is in color while connected and grey otherwise. A badge flags anything that needs attention:
+
+| Badge | Meaning |
+| --- | --- |
+| `…` (violet) | Capturing a task, or waiting for pairing approval. |
+| `!` (red) | Connection is on, but the bridge is offline or not connected. |
+| `!` (amber) | The last capture is incomplete. Open the popup to read its warnings. |
+| `+` (amber) | An image host needs permission. |
+| none | Connected (color icon), or turned off or not paired (grey icon). |
 
 Check the bridge without exposing a token:
 
@@ -64,16 +74,17 @@ For another stdio MCP client, set `command` to `node` and `args` to the absolute
 | MCP tool | Result |
 | --- | --- |
 | `monday_bridge_status` | Bridge health, pairing, and extension connection state. |
+| `monday_read_task` | Fresh snapshot of any task by `url`, or by `boardId` + `itemId` (optional `accountHost`, defaulting to the host of the latest cached task). The extension loads the task in a background tab, reads it, and closes the tab; you do not need to open it. Waits up to 180 seconds. |
 | `monday_read_open_task` | Fresh snapshot from the active monday task tab, or the first open task tab if another tab is active. Waits up to 180 seconds. |
 | `monday_get_task` | Latest cached snapshot, optionally filtered by `boardId` and/or `itemId`. |
 | `monday_get_image` | Original PNG, JPEG, GIF, or WebP bytes for a ready attachment ID. |
 | `monday_list_tasks` | Summaries of locally cached snapshots. |
 
-Typical agent flow: call `monday_bridge_status`, then `monday_read_open_task`, inspect `complete` and `warnings`, and call `monday_get_image` only for an attachment whose status is `ready`. A missing original returns an explicit error.
+Typical agent flow: call `monday_bridge_status`, then `monday_read_task` with the task link (or `monday_read_open_task` for the task on screen), inspect `complete` and `warnings`, and call `monday_get_image` only for an attachment whose status is `ready`. A missing original returns an explicit error.
 
 ## Local data and trust boundary
 
-The receiver listens on loopback only. Browser web origins are rejected. A six-digit pairing code needs local CLI approval; afterwards extension requests require a bearer token and the paired extension origin. The MCP server uses a separate local admin token.
+The receiver listens on loopback only. Browser web origins are rejected. A six-digit pairing code needs local CLI approval; afterwards extension requests require a bearer token and the paired extension origin. The MCP server uses a separate local admin token. **Unpair** in the popup revokes the extension token on the bridge and forgets the paired extension. Each new pairing issues a fresh token, so a token from an earlier pairing stops working, including one left behind by an unpair while the bridge was offline.
 
 Snapshots, image bytes, and tokens are stored **unencrypted** under the current OS user's profile:
 
@@ -87,13 +98,15 @@ Snapshots, image bytes, and tokens are stored **unencrypted** under the current 
 
 ## Limits and troubleshooting
 
-- **`BROWSER_OFFLINE` or `extensionConnected: false`:** Start the bridge, check the popup, and use **Reconnect** if needed. A paired extension can be disconnected while Chrome is closed.
+- **`BROWSER_OFFLINE` or `extensionConnected: false`:** Start the bridge, check that the popup's power button is on, and use **Retry connection** if needed. A paired extension can be disconnected while Chrome is closed.
 - **`CAPTURE_TIMEOUT`:** A live capture did not finish within 180 seconds. Check the popup error and retry one task at a time.
 - **`NO_SNAPSHOT`:** No cached task matches the requested IDs, or the MCP process could not obtain a capture. Check `monday_bridge_status` first.
-- **No task tab found:** Open a task in the same Chrome profile as the extension, then call `monday_read_open_task` again. Board pages without an open task are not captured.
+- **No task tab found:** Call `monday_read_task` with the task URL instead, or open a task in the same Chrome profile as the extension and call `monday_read_open_task` again. Board pages without an open task are not captured.
+- **Reading a task by link:** Chrome must be running with the extension's power button on, and the profile must be signed in to the monday account that owns the task. `INVALID_TARGET` means the URL is not a `https://<account>.monday.com/boards/<id>/pulses/<id>` task link, or no account host is known for a board and item ID.
 - **Capture incomplete:** Read `warnings`. monday can change its DOM, virtualize updates, hide Files links, or deny an original download. A `complete: false` snapshot is still usable for the data it contains; it does not claim to include everything. Even `complete: true` reflects only what the page exposed to the extractor.
 - **`IMAGE_ORIGINAL_UNAVAILABLE` or image unavailable:** Only PNG, JPEG, GIF, and WebP originals are accepted after byte-level validation. SVG, other files, thumbnails, failed downloads, and images over **25 MB each** or **75 MB per capture** are not returned as original images. Grant a requested image-host permission in the popup and reopen the task when appropriate.
-- **Pairing fails or expires:** Click **Start Pairing** again and approve the new code within two minutes. A replacement extension ID can pair again through the local CLI.
+- **Pairing fails or expires:** Click **Start pairing** again and approve the new code within two minutes. Pairing a different extension ID replaces the previous pairing; the old extension must pair again to reconnect.
+- **Popup says the bridge no longer accepts this browser:** Another pairing replaced this one, or the bridge is using a different data directory. Pair again.
 - **Concurrent captures:** The bridge does not queue multiple capture requests. Run one live capture at a time.
 
 The extractor depends on monday's rendered UI, so a monday layout change can require selector updates. When reporting a failure, include the task URL shape, popup error, snapshot warnings, and a description of the missing field or attachment. Do not include session cookies, bridge tokens, or private task content in a public issue.

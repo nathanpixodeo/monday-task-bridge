@@ -1,6 +1,6 @@
 {
   "name": "monday-task-bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local Chrome extension and MCP bridge for reading monday.com tasks and original images through a signed-in browser session.",
   "private": true,
   "license": "UNLICENSED",

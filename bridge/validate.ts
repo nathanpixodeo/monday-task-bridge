@@ -171,7 +171,7 @@ export const TaskSnapshotSchema = z.object({
   updates: z.array(TaskUpdateSchema).max(500),
   attachments: z.array(TaskAttachmentSchema).max(100),
   capturedAt: z.string().max(128),
-  captureReason: z.enum(['auto', 'mcp']),
+  captureReason: z.enum(['auto', 'manual', 'mcp']),
   complete: z.boolean(),
   warnings: z.array(z.string().max(1000)).max(100),
 })
@@ -208,6 +208,48 @@ export const PairRequestBodySchema = z.object({
 export const PairApproveBodySchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'Code must be exactly 6 digits'),
 })
+
+export const ReadTaskBodySchema = z.object({
+  url: z.string().max(2048).optional(),
+  boardId: z.string().regex(/^\d{1,20}$/).optional(),
+  itemId: z.string().regex(/^\d{1,20}$/).optional(),
+  accountHost: z.string().regex(/^[a-z0-9-]+\.monday\.com$/i).optional(),
+})
+
+const MONDAY_HOST_RE = /^[a-z0-9-]+\.monday\.com$/i
+const TASK_PATH_RE = /\/boards\/\d+(?:\/views\/\d+)?\/pulses\/\d+/
+
+/**
+ * Turn a read-task request into a canonical https monday.com task URL so the
+ * extension never opens a tab on an arbitrary host.
+ */
+export function resolveTaskUrl(
+  body: z.infer<typeof ReadTaskBodySchema>,
+  fallbackHost: string | null
+): { url: string } | { error: string } {
+  if (body.url) {
+    let u: URL
+    try {
+      u = new URL(body.url)
+    } catch {
+      return { error: 'Invalid task url' }
+    }
+    if (u.protocol !== 'https:' || !MONDAY_HOST_RE.test(u.hostname) || !TASK_PATH_RE.test(u.pathname)) {
+      return { error: 'Not a monday.com task url' }
+    }
+    return { url: u.toString() }
+  }
+
+  if (body.boardId && body.itemId) {
+    const host = body.accountHost ?? fallbackHost
+    if (!host || !MONDAY_HOST_RE.test(host)) {
+      return { error: 'Unknown monday account host: pass accountHost or a full task URL' }
+    }
+    return { url: `https://${host}/boards/${body.boardId}/pulses/${body.itemId}` }
+  }
+
+  return { error: 'Pass a task url, or boardId and itemId' }
+}
 
 export const MAX_CAPTURE_BYTES = 100 * 1024 * 1024 // 100 MB
 

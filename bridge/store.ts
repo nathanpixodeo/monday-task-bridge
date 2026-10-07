@@ -14,7 +14,7 @@
  */
 
 import { randomBytes, createHash } from 'node:crypto'
-import { mkdir, writeFile, readFile, readdir, unlink, stat, rename, chmod } from 'node:fs/promises'
+import { mkdir, writeFile, readFile, readdir, unlink, stat, rename, chmod, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { platform, env } from 'node:process'
 import type { TaskSnapshot, ImageUpload } from '../shared/types.js'
@@ -106,7 +106,6 @@ export class Store {
   private _imagesDir: string
 
   private _adminTokenLock: Promise<string> | null = null
-  private _bridgeTokenLock: Promise<string> | null = null
 
   constructor(dataDir?: string) {
     this.dataDir = dataDir ?? resolveDataDir()
@@ -176,35 +175,17 @@ export class Store {
     await atomicWrite(join(this.dataDir, 'bridge-token'), token, 0o600)
   }
 
-  async ensureBridgeToken(): Promise<string> {
-    if (this._bridgeTokenLock) return this._bridgeTokenLock
+  /** Issue a fresh bridge token. Any previously issued token stops working. */
+  async rotateBridgeToken(): Promise<string> {
+    const token = generateToken()
+    await this.setBridgeToken(token)
+    return token
+  }
 
-    this._bridgeTokenLock = (async () => {
-      try {
-        const existing = await this.getBridgeToken()
-        if (existing) return existing
-
-        const token = generateToken()
-        const tokenPath = join(this.dataDir, 'bridge-token')
-        try {
-          await writeFile(tokenPath, token, { flag: 'wx', mode: 0o600 })
-          try {
-            await chmod(tokenPath, 0o600)
-          } catch {}
-          return token
-        } catch (err: unknown) {
-          if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') {
-            const readAgain = await this.getBridgeToken()
-            if (readAgain) return readAgain
-          }
-          throw err
-        }
-      } finally {
-        this._bridgeTokenLock = null
-      }
-    })()
-
-    return this._bridgeTokenLock
+  /** Forget the paired extension: its bridge token and bound origin. */
+  async clearPairing(): Promise<void> {
+    await rm(join(this.dataDir, 'bridge-token'), { force: true })
+    await rm(join(this.dataDir, 'paired-origin'), { force: true })
   }
 
   // -- Paired extension origin ----------------------------------------------

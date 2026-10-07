@@ -1,4 +1,5 @@
-import { getConfig, setConfig } from './helpers/storage'
+import { getConfig, setConfig, defaultConfig, unpairedFields } from './helpers/storage'
+import type { Config } from './helpers/storage'
 import type {
   TaskSnapshot,
   TaskAttachment,
@@ -7,6 +8,8 @@ import type {
   ExtensionToBridgeMessage,
   BridgeToExtensionMessage
 } from '../shared/types'
+
+const BRIDGE_OFFLINE_MESSAGE = 'Cannot reach the bridge at 127.0.0.1:3457. Start it with: npm run bridge'
 
 let ws: WebSocket | null = null
 let authenticated = false
@@ -29,7 +32,7 @@ async function handlePairingTimeout() {
   if (config.status === 'pairing') {
     await setConfig({
       status: 'error',
-      error: 'Pairing timed out (2 min)',
+      error: 'Pairing code expired. Start pairing again.',
       pairId: null,
       pairingSecret: null,
       pairCode: null,
@@ -42,35 +45,48 @@ async function handlePairingTimeout() {
 
 async function connectWs() {
   const config = await getConfig()
-  if (!config.paired || !config.token) return
+  if (!config.paired || !config.token || !config.enabled) return
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
 
-  await setConfig({ status: 'connecting', error: null })
+  // Power can be switched off while this write waits in the queue
+  const current = await setConfig({ status: 'connecting', connectedAt: null })
+  if (!current.enabled) {
+    await setConfig({ status: 'disconnected' })
+    return
+  }
 
   try {
-    ws = new WebSocket('ws://127.0.0.1:3457/v1/live')
+    const socket = new WebSocket('ws://127.0.0.1:3457/v1/live')
+    ws = socket
 
-    ws.onopen = () => {
+    // A replaced socket can still fire events; it must not touch `ws` or the status.
+    socket.onopen = () => {
+      if (ws !== socket) return
       // Do NOT set connected yet — wait for hello-ack
-      const config_sync = getConfig()
-      config_sync.then((c) => {
-        if (c.token && ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'hello', token: c.token } satisfies ExtensionToBridgeMessage))
+      getConfig().then((c) => {
+        if (c.token && ws === socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'hello', token: c.token } satisfies ExtensionToBridgeMessage))
         }
       })
     }
 
-    ws.onmessage = async (event) => {
+    socket.onmessage = async (event) => {
+      if (ws !== socket) return
       try {
         const data = typeof event.data === 'string' ? event.data : await (event.data as Blob).text()
         const msg = JSON.parse(data) as BridgeToExtensionMessage
         if (msg.type === 'hello-ack') {
           authenticated = true
-          await setConfig({ status: 'authenticated', error: null })
+          await setConfig({ status: 'authenticated', error: null, connectedAt: new Date().toISOString() })
           startHeartbeat()
         } else if (msg.type === 'capture') {
           if (!authenticated) return
-          performCapture(msg.requestId, 'mcp').catch(async (err) => {
+          // The bridge validates targets too; re-check so this worker only ever loads monday task pages
+          if (msg.url !== undefined && !isMondayTaskUrl(msg.url)) {
+            reportCaptureError(msg.requestId, 'Not a monday task URL')
+            return
+          }
+          performCapture(msg.requestId, 'mcp', msg.url).catch(async (err) => {
             reportCaptureError(msg.requestId, String(err))
           })
         }
@@ -79,22 +95,43 @@ async function connectWs() {
       }
     }
 
-    ws.onclose = () => {
+    socket.onclose = (event) => {
+      if (ws !== socket) return
       authenticated = false
       stopHeartbeat()
-      setConfig({ status: 'disconnected' })
       ws = null
+      // 4003 invalid token, 4004 unpaired, 4005 pairing replaced: the token is dead for good
+      if (event.code === 4003 || event.code === 4004 || event.code === 4005) {
+        setConfig({ ...unpairedFields, error: 'The bridge no longer accepts this browser. Pair again.' })
+      } else {
+        setConfig({ status: 'disconnected', connectedAt: null })
+      }
     }
 
-    ws.onerror = () => {
+    socket.onerror = () => {
+      if (ws !== socket) return
       authenticated = false
       stopHeartbeat()
-      setConfig({ status: 'error', error: 'WebSocket connection error' })
+      setConfig({ status: 'error', connectedAt: null })
     }
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e)
     setConfig({ status: 'error', error: message })
   }
+}
+
+/** Close the live socket without letting its handlers touch status or `ws`. */
+function disconnectWs() {
+  if (ws) {
+    ws.onopen = null
+    ws.onmessage = null
+    ws.onclose = null
+    ws.onerror = null
+    ws.close()
+    ws = null
+  }
+  authenticated = false
+  stopHeartbeat()
 }
 
 function startHeartbeat() {
@@ -125,6 +162,48 @@ function reportCaptureError(requestId: string, error: string) {
   setConfig({ error: `Capture failed: ${error}` })
 }
 
+// ─── Toolbar badge ───────────────────────────────────────────────────
+
+function badgeFor(config: Config): { text: string; color: string; title: string } {
+  if (!config.paired && config.status === 'pairing') {
+    return { text: '…', color: '#7C3AED', title: 'Waiting for pairing approval' }
+  }
+  if (!config.paired) return { text: '', color: '#64748B', title: 'Not paired' }
+  if (!config.enabled) return { text: '', color: '#64748B', title: 'Disconnected' }
+  if (config.status !== 'authenticated') return { text: '!', color: '#E11D48', title: 'Bridge offline' }
+  if (config.pendingOrigins.length > 0) return { text: '+', color: '#D97706', title: 'Image host permission needed' }
+  if (config.capturing) return { text: '…', color: '#7C3AED', title: 'Capturing task' }
+  if (config.lastCaptureComplete === false) return { text: '!', color: '#D97706', title: 'Last capture incomplete' }
+  return { text: '', color: '#16A34A', title: 'Connected' }
+}
+
+let iconVariant: 'on' | 'off' | null = null
+
+function updateBadge(config: Config) {
+  const { text, color, title } = badgeFor(config)
+  void chrome.action.setBadgeText({ text })
+  void chrome.action.setBadgeBackgroundColor({ color })
+  void chrome.action.setBadgeTextColor({ color: '#FFFFFF' })
+  void chrome.action.setTitle({ title: `Monday Task Bridge: ${title}` })
+
+  // The toolbar icon color mirrors the connection, like a VPN toggle
+  const connected = config.paired && config.enabled && config.status === 'authenticated'
+  const variant = connected ? 'on' : 'off'
+  if (variant !== iconVariant) {
+    iconVariant = variant
+    void chrome.action.setIcon({
+      path: connected
+        ? { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' }
+        : { 16: 'icons/icon-off-16.png', 32: 'icons/icon-off-32.png' }
+    })
+  }
+}
+
+chrome.storage.local.onChanged.addListener((changes) => {
+  const next = changes.config?.newValue as Partial<Config> | undefined
+  if (next) updateBadge({ ...defaultConfig, ...next })
+})
+
 // ─── Pairing ─────────────────────────────────────────────────────────
 
 const PAIRING_POLL_INTERVAL = 2000
@@ -147,6 +226,7 @@ async function pollPairing(pairId: string, secret: string) {
         await setConfig({
           paired: true,
           token: body.token,
+          enabled: true,
           status: 'disconnected',
           pairId: null,
           pairingSecret: null,
@@ -164,7 +244,7 @@ async function pollPairing(pairId: string, secret: string) {
     if (res.status === 404 || res.status === 403 || res.status === 400) {
       await setConfig({
         status: 'error',
-        error: 'Pairing failed or expired',
+        error: 'Pairing code expired or was rejected. Start pairing again.',
         pairId: null,
         pairingSecret: null,
         pairCode: null,
@@ -184,12 +264,14 @@ async function pollPairing(pairId: string, secret: string) {
 
 // On worker startup, resume pairing if it was in progress
 ;(async () => {
-  const config = await getConfig()
+  // A restarted worker has no capture in flight
+  const config = await setConfig({ capturing: false })
   if (config.status === 'pairing' && config.pairId && config.pairingSecret) {
     pollPairing(config.pairId, config.pairingSecret)
   } else {
     connectWs()
   }
+  updateBadge(await getConfig())
 })()
 
 // ─── Message handling from popup / content ───────────────────────────
@@ -204,7 +286,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ secret })
         })
-        if (!res.ok) throw new Error('Failed to request pairing')
+        if (!res.ok) {
+          const body = await res.json().catch(() => null)
+          throw new Error(typeof body?.error === 'string' ? body.error : `Bridge returned HTTP ${res.status}`)
+        }
         const { pairId, code, expiresAt } = await res.json()
 
         await setConfig({
@@ -222,12 +307,120 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ code })
         pollPairing(pairId, secret)
       } catch (e: unknown) {
-        const message = e instanceof Error ? e.message : String(e)
+        // fetch rejects with a TypeError when nothing listens on the bridge port
+        const message = e instanceof TypeError ? BRIDGE_OFFLINE_MESSAGE : e instanceof Error ? e.message : String(e)
         await setConfig({ status: 'error', error: message })
         sendResponse({ error: message })
       }
     })()
     return true // async sendResponse
+  }
+
+  if (msg.type === 'cancel-pairing') {
+    ;(async () => {
+      chrome.alarms.clear('pairing-timeout')
+      await setConfig({
+        status: 'disconnected',
+        error: null,
+        pairId: null,
+        pairingSecret: null,
+        pairCode: null,
+        expiresAt: null
+      })
+      sendResponse({ ok: true })
+    })()
+    return true
+  }
+
+  if (msg.type === 'unpair') {
+    ;(async () => {
+      const { token } = await getConfig()
+      disconnectWs()
+      chrome.alarms.clear('pairing-timeout')
+      // Clear local state before the network call so the reconnect alarm cannot reuse the old token
+      await setConfig(unpairedFields)
+      let revoked = true
+      if (token) {
+        try {
+          const res = await fetch('http://127.0.0.1:3457/v1/unpair', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(3000)
+          })
+          // 403: the bridge already rejects this token (rotated, or another extension paired)
+          revoked = res.ok || res.status === 403
+        } catch {
+          revoked = false
+        }
+      }
+      sendResponse({ revoked })
+    })()
+    return true
+  }
+
+  if (msg.type === 'capture-now') {
+    ;(async () => {
+      const config = await getConfig()
+      if (!config.paired) {
+        sendResponse({ error: 'Pair with the bridge first.' })
+        return
+      }
+      if (!config.enabled) {
+        sendResponse({ error: 'Turn the connection on first.' })
+        return
+      }
+      const url = await findTaskTabUrl()
+      if (!url) {
+        sendResponse({ error: 'Open a monday task first (URL with /boards/<id>/pulses/<id>).' })
+        return
+      }
+      await performCapture(undefined, 'manual', url)
+      sendResponse({ ok: true })
+    })()
+    return true
+  }
+
+  if (msg.type === 'set-auto-sync') {
+    ;(async () => {
+      await setConfig({ autoSync: msg.enabled === true })
+      sendResponse({ ok: true })
+    })()
+    return true
+  }
+
+  if (msg.type === 'set-enabled') {
+    ;(async () => {
+      if (msg.enabled === true) {
+        await setConfig({ enabled: true })
+        connectWs()
+      } else {
+        disconnectWs()
+        await setConfig({ enabled: false, status: 'disconnected', connectedAt: null })
+      }
+      sendResponse({ ok: true })
+    })()
+    return true
+  }
+
+  if (msg.type === 'clear-error') {
+    ;(async () => {
+      const config = await getConfig()
+      await setConfig(config.status === 'error' ? { error: null, status: 'disconnected' } : { error: null })
+      sendResponse({ ok: true })
+    })()
+    return true
+  }
+
+  if (msg.type === 'permissions-granted') {
+    ;(async () => {
+      const { pendingOrigins } = await getConfig()
+      const granted = await Promise.all(
+        pendingOrigins.map((origin) => chrome.permissions.contains({ origins: [origin] }))
+      )
+      await setConfig({ pendingOrigins: pendingOrigins.filter((_, i) => !granted[i]) })
+      sendResponse({ ok: true })
+    })()
+    return true
   }
 
   if (msg.type === 'get-status') {
@@ -239,10 +432,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'reconnect') {
-    ws?.close()
-    ws = null
-    authenticated = false
-    stopHeartbeat()
+    disconnectWs()
     connectWs()
     return false
   }
@@ -281,7 +471,7 @@ const AUTO_SYNC_DEBOUNCE_MS = 5000
 
 async function handleAutoSync(url: string, tabId?: number) {
   const config = await getConfig()
-  if (!config.paired || !config.autoSync) return
+  if (!config.paired || !config.enabled || !config.autoSync) return
 
   // Parse URL to verify it's a task URL
   if (!isMondayTaskUrl(url)) return
@@ -333,8 +523,19 @@ function parseMondayUrl(url: string): { accountHost: string; boardId: string; it
 
 // Set of tab IDs that are temporary extraction tabs — content scripts must ignore these
 const temporaryTabIds = new Set<number>()
+// Auto-sync, manual and MCP captures can overlap; `capturing` stays true until the last one ends
+let activeCaptures = 0
 
-async function performCapture(requestId?: string, reason: 'mcp' | 'auto' = 'mcp', sourceUrl?: string) {
+/** The task open in the active tab of the current window, else the first open monday task tab. */
+async function findTaskTabUrl(): Promise<string | undefined> {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+  const activeUrl = tabs[0]?.url || ''
+  if (isMondayTaskUrl(activeUrl)) return activeUrl
+  const mondayTabs = await chrome.tabs.query({ url: 'https://*.monday.com/*' })
+  return mondayTabs.find((t) => t.url && isMondayTaskUrl(t.url))?.url
+}
+
+async function performCapture(requestId?: string, reason: 'mcp' | 'auto' | 'manual' = 'mcp', sourceUrl?: string) {
   const captureDeadline = Date.now() + 150_000
   const config = await getConfig()
   if (!config.token) {
@@ -342,24 +543,7 @@ async function performCapture(requestId?: string, reason: 'mcp' | 'auto' = 'mcp'
     return
   }
 
-  let targetUrl = sourceUrl
-
-  if (!targetUrl) {
-    // Find the active Monday tab with a task open
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
-    const activeUrl = tabs[0]?.url || ''
-    if (isMondayTaskUrl(activeUrl)) {
-      targetUrl = activeUrl
-    } else {
-      // Search all Monday tabs for one with a task
-      const mondayTabs = await chrome.tabs.query({ url: 'https://*.monday.com/*' })
-      const taskTab = mondayTabs.find((t) => t.url && isMondayTaskUrl(t.url))
-      if (taskTab?.url) {
-        targetUrl = taskTab.url
-      }
-    }
-  }
-
+  const targetUrl = sourceUrl ?? await findTaskTabUrl()
   if (!targetUrl) {
     if (requestId) reportCaptureError(requestId, 'No Monday task tab found')
     return
@@ -372,7 +556,9 @@ async function performCapture(requestId?: string, reason: 'mcp' | 'auto' = 'mcp'
   }
 
   let tempTabId: number | undefined
+  activeCaptures++
   try {
+    await setConfig({ capturing: true })
     // Open a temporary inactive tab for extraction
     const tab = await chrome.tabs.create({ url: targetUrl, active: false })
     tempTabId = tab.id
@@ -434,8 +620,9 @@ async function performCapture(requestId?: string, reason: 'mcp' | 'auto' = 'mcp'
         const hasPermission = await chrome.permissions.contains({ origins: [originPattern] })
 
         if (!hasPermission) {
-          // Track this origin so popup can request permission
-          const pendingOrigins = new Set<string>(config.pendingOrigins)
+          // Track this origin so popup can request permission. Re-read the list: the copy from
+          // capture start would drop origins added for earlier attachments or cleared by a grant.
+          const pendingOrigins = new Set<string>((await getConfig()).pendingOrigins)
           pendingOrigins.add(originPattern)
           await setConfig({ pendingOrigins: Array.from(pendingOrigins) })
 
@@ -545,7 +732,8 @@ async function performCapture(requestId?: string, reason: 'mcp' | 'auto' = 'mcp'
       lastCaptureAt: snapshot.capturedAt,
       lastTaskTitle: snapshot.title,
       lastCaptureComplete: snapshot.complete,
-      error: snapshot.complete ? null : `Capture incomplete: ${warnings[0] || 'original image unavailable'}`
+      lastWarnings: warnings,
+      error: null
     })
 
     if (requestId) {
@@ -562,6 +750,8 @@ async function performCapture(requestId?: string, reason: 'mcp' | 'auto' = 'mcp'
       temporaryTabIds.delete(tempTabId)
       chrome.tabs.remove(tempTabId).catch(() => { /* tab may already be closed */ })
     }
+    activeCaptures--
+    await setConfig({ capturing: activeCaptures > 0 })
   }
 }
 

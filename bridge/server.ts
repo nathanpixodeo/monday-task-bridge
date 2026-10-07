@@ -14,6 +14,8 @@ import {
   CapturePayloadSchema,
   PairRequestBodySchema,
   PairApproveBodySchema,
+  ReadTaskBodySchema,
+  resolveTaskUrl,
   validateCaptureSize,
 } from './validate.js'
 import type { CapturePayload, ExtensionToBridgeMessage, BridgeToExtensionMessage } from '../shared/types.js'
@@ -156,6 +158,44 @@ function cleanupSocket(connId: string): void {
   }
 }
 
+/** Close every authenticated extension socket, e.g. after its token is revoked. */
+function closeLiveSockets(code: number, reason: string): void {
+  for (const [connId, ls] of liveSockets) {
+    ls.ws.close(code, reason)
+    cleanupSocket(connId)
+  }
+}
+
+/**
+ * Verify the extension's Bearer bridge token and, once bound, its paired origin.
+ * Writes the error response and returns false on failure.
+ */
+async function authenticateExtension(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  origin: string
+): Promise<boolean> {
+  // Authenticate with Bearer token using timing-safe comparison
+  const auth = req.headers.authorization
+  if (!auth?.startsWith('Bearer ')) {
+    json(res, 401, { error: 'Missing Bearer token' })
+    return false
+  }
+  const token = auth.slice(7)
+  const bridgeToken = await store.getBridgeToken()
+  if (!bridgeToken || !safeCompare(token, bridgeToken)) {
+    json(res, 403, { error: 'Invalid bridge token' })
+    return false
+  }
+
+  const pairedOrigin = await store.getPairedOrigin()
+  if (pairedOrigin && !safeCompare(origin, pairedOrigin)) {
+    json(res, 403, { error: 'Forbidden: origin does not match paired extension' })
+    return false
+  }
+  return true
+}
+
 // ---------------------------------------------------------------------------
 // Capture request/resolution
 // ---------------------------------------------------------------------------
@@ -164,7 +204,7 @@ function cleanupSocket(connId: string): void {
  * Request a capture from the connected extension.
  * Returns a promise that resolves when the extension posts the snapshot.
  */
-export function requestCapture(): Promise<CapturePayload> {
+export function requestCapture(url?: string): Promise<CapturePayload> {
   // Find an authenticated socket
   let targetConnId: string | undefined
   let target: LiveSocket | undefined
@@ -194,7 +234,7 @@ export function requestCapture(): Promise<CapturePayload> {
       reject,
       timer,
     })
-    wsSend(target!.ws, { type: 'capture', requestId })
+    wsSend(target!.ws, url ? { type: 'capture', requestId, url } : { type: 'capture', requestId })
   })
 }
 
@@ -318,21 +358,35 @@ async function handlePairApprove(req: http.IncomingMessage, res: http.ServerResp
     return
   }
 
-  // Ensure a bridge token exists
-  const bridgeToken = await store.ensureBridgeToken()
-
-  const result = pairing.approveByCode(parsed.data.code, bridgeToken)
+  const approval = approvalQueue.then(() => approvePairing(parsed.data.code))
+  approvalQueue = approval.catch(() => {})
+  const result = await approval
   if (!result) {
     json(res, 404, { error: 'Pairing code not found or expired' })
     return
   }
 
-  // Bind paired origin to later requests
-  if (result.origin) {
-    await store.setPairedOrigin(result.origin)
+  json(res, 200, { pairId: result.pairId, approved: true })
+}
+
+/** Serializes approvals so two of them can't interleave token rotation. */
+let approvalQueue: Promise<unknown> = Promise.resolve()
+
+async function approvePairing(code: string): Promise<{ pairId: string } | null> {
+  const pending = pairing.findPendingByCode(code)
+  if (!pending) return null
+
+  // Every approval issues a new token, so an earlier extension token stops working
+  // even if that extension was unpaired while the bridge was offline.
+  const bridgeToken = await store.rotateBridgeToken()
+  closeLiveSockets(4005, 'Pairing replaced')
+
+  // Bind the paired origin before the token becomes visible to the polling extension
+  if (pending.origin) {
+    await store.setPairedOrigin(pending.origin)
   }
 
-  json(res, 200, { pairId: result.pairId, approved: true })
+  return pairing.approveByCode(code, bridgeToken)
 }
 
 async function handleSnapshots(
@@ -340,25 +394,10 @@ async function handleSnapshots(
   res: http.ServerResponse,
   origin: string
 ): Promise<void> {
-  // Authenticate with Bearer token using timing-safe comparison
-  const auth = req.headers.authorization
-  if (!auth?.startsWith('Bearer ')) {
-    json(res, 401, { error: 'Missing Bearer token' })
-    return
-  }
-  const token = auth.slice(7)
-  const bridgeToken = await store.getBridgeToken()
-  if (!bridgeToken || !safeCompare(token, bridgeToken)) {
-    json(res, 403, { error: 'Invalid bridge token' })
-    return
-  }
+  if (!(await authenticateExtension(req, res, origin))) return
 
-  // Bind or verify paired extension origin
-  const pairedOrigin = await store.getPairedOrigin()
-  if (pairedOrigin && !safeCompare(origin, pairedOrigin)) {
-    json(res, 403, { error: 'Forbidden: origin does not match paired extension' })
-    return
-  } else if (!pairedOrigin) {
+  // Bind paired extension origin on first authenticated use
+  if (!(await store.getPairedOrigin())) {
     await store.setPairedOrigin(origin)
   }
 
@@ -419,6 +458,18 @@ async function handleSnapshots(
   json(res, 200, { requestId, stored: true })
 }
 
+async function handleUnpair(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  origin: string
+): Promise<void> {
+  if (!(await authenticateExtension(req, res, origin))) return
+
+  await store.clearPairing()
+  closeLiveSockets(4004, 'Unpaired')
+  json(res, 200, { unpaired: true })
+}
+
 async function handleReadOpenTask(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const adminToken = req.headers['x-bridge-admin-token'] as string | undefined
   const expectedAdmin = await store.getAdminToken()
@@ -427,8 +478,44 @@ async function handleReadOpenTask(req: http.IncomingMessage, res: http.ServerRes
     return
   }
 
+  await captureAndRespond(res)
+}
+
+async function handleReadTask(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const adminToken = req.headers['x-bridge-admin-token'] as string | undefined
+  const expectedAdmin = await store.getAdminToken()
+  if (!adminToken || !safeCompare(adminToken, expectedAdmin)) {
+    json(res, 403, { error: 'Invalid admin token' })
+    return
+  }
+
+  const body = await readBody(req, 4096)
+  let parsedJson: unknown
   try {
-    const payload = await requestCapture()
+    parsedJson = JSON.parse(body)
+  } catch {
+    json(res, 400, { error: 'Invalid JSON' })
+    return
+  }
+  const parsed = ReadTaskBodySchema.safeParse(parsedJson)
+  if (!parsed.success) {
+    json(res, 400, { error: 'Invalid body', details: parsed.error.issues })
+    return
+  }
+
+  const fallbackHost = (await store.getLatestSnapshot())?.snapshot.accountHost ?? null
+  const target = resolveTaskUrl(parsed.data, fallbackHost)
+  if ('error' in target) {
+    json(res, 400, { error: target.error })
+    return
+  }
+
+  await captureAndRespond(res, target.url)
+}
+
+async function captureAndRespond(res: http.ServerResponse, url?: string): Promise<void> {
+  try {
+    const payload = await requestCapture(url)
     json(res, 200, {
       snapshot: payload.snapshot,
       imageCount: payload.images.length,
@@ -535,9 +622,25 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       return
     }
 
+    // POST /v1/unpair – extension route: revoke its token and bound origin
+    if (method === 'POST' && pathname === '/v1/unpair') {
+      if (!origin || !isExtensionOrigin(origin)) {
+        json(res, 403, { error: 'Forbidden: requires chrome-extension Origin' })
+        return
+      }
+      await handleUnpair(req, res, origin)
+      return
+    }
+
     // POST /v1/read-open-task – MCP admin route (allowed without Origin)
     if (method === 'POST' && pathname === '/v1/read-open-task') {
       await handleReadOpenTask(req, res)
+      return
+    }
+
+    // POST /v1/read-task – MCP admin route (allowed without Origin)
+    if (method === 'POST' && pathname === '/v1/read-task') {
+      await handleReadTask(req, res)
       return
     }
 

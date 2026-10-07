@@ -27,7 +27,7 @@ export interface TaskSnapshot {
   updates: TaskUpdate[]
   attachments: TaskAttachment[]
   capturedAt: string
-  captureReason: 'auto' | 'mcp'
+  captureReason: 'auto' | 'manual' | 'mcp'
   complete: boolean
   warnings: string[]
 }
@@ -52,4 +52,4 @@ export type ExtensionToBridgeMessage =
 
 export type BridgeToExtensionMessage =
   | { type: 'hello-ack' }
-  | { type: 'capture'; requestId: string }
+  | { type: 'capture'; requestId: string; url?: string }

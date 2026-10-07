@@ -62,6 +62,19 @@ export class PairingManager {
   }
 
   /**
+   * Look up an unexpired, unapproved request by code without approving it.
+   */
+  findPendingByCode(code: string): { pairId: string; origin?: string } | null {
+    this._gc()
+    for (const req of this._pending.values()) {
+      if (safeCompare(req.code, code) && !req.approved && !this._isExpired(req)) {
+        return { pairId: req.pairId, origin: req.origin }
+      }
+    }
+    return null
+  }
+
+  /**
    * Approve a pending request by 6-digit code.
    * Returns pairId (and origin if bound) on success, null if code not found/expired.
    */

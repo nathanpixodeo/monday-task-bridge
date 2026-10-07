@@ -45,6 +45,7 @@ test('pairing, origin restrictions, original image storage and live capture work
   const server = await startServer()
   const base = `http://127.0.0.1:${port}`
   let ws: WebSocket | undefined
+  let ws2: WebSocket | undefined
 
   try {
     const send = (path: string, body: unknown, headers: Record<string, string> = {}) => fetch(base + path, {
@@ -147,6 +148,39 @@ test('pairing, origin restrictions, original image storage and live capture work
     assert.equal(live.snapshot.title, 'Example task')
     assert.deepEqual(await store.getImageBytes('image-1'), Buffer.from(pngBase64, 'base64'))
 
+    const nextCommand = () => new Promise<{ type: string; requestId: string; url?: string }>((resolve, reject) => {
+      ws!.once('message', data => {
+        try { resolve(JSON.parse(data.toString())) } catch (error) { reject(error) }
+      })
+    })
+    const adminHeaders = { 'X-Bridge-Admin-Token': adminToken }
+
+    assert.equal((await send('/v1/read-task', { url: 'https://team.monday.com/boards/123/pulses/456' })).status, 403)
+    assert.equal((await send('/v1/read-task', { url: 'https://evil.example/boards/1/pulses/2' }, adminHeaders)).status, 400)
+
+    const taskUrl = 'https://team.monday.com/boards/123/pulses/456'
+    const urlRead = send('/v1/read-task', { url: taskUrl }, adminHeaders)
+    const urlCommand = await nextCommand()
+    assert.deepEqual(urlCommand, { type: 'capture', requestId: urlCommand.requestId, url: taskUrl })
+    assert.equal((await send('/v1/snapshots', payload(urlCommand.requestId), {
+      Origin: extensionOrigin, Authorization: `Bearer ${token}`
+    })).status, 200)
+    const urlResult = await urlRead
+    assert.equal(urlResult.status, 200)
+    assert.equal(((await urlResult.json()) as { snapshot: TaskSnapshot }).snapshot.title, 'Example task')
+
+    // No host given: falls back to the account host of the latest cached snapshot.
+    const idRead = send('/v1/read-task', { boardId: '123', itemId: '789' }, adminHeaders)
+    const idCommand = await nextCommand()
+    assert.equal(idCommand.type, 'capture')
+    assert.equal(idCommand.url, 'https://team.monday.com/boards/123/pulses/789')
+    assert.equal((await send('/v1/snapshots', payload(idCommand.requestId), {
+      Origin: extensionOrigin, Authorization: `Bearer ${token}`
+    })).status, 200)
+    const idResult = await idRead
+    assert.equal(idResult.status, 200)
+    assert.equal(((await idResult.json()) as { snapshot: TaskSnapshot }).snapshot.title, 'Example task')
+
     const partial = payload('partial-capture')
     partial.images = []
     partial.snapshot.attachments = [{
@@ -158,19 +192,72 @@ test('pairing, origin restrictions, original image storage and live capture work
     })).status, 200)
     assert.equal((await store.getSnapshot('partial-capture'))?.snapshot.complete, false)
 
+    const replacedClose = new Promise<number>(resolve => ws!.once('close', code => resolve(code)))
     assert.equal((await send('/v1/pair/approve', { code: replacement.code }, {
       'X-Bridge-Admin-Token': adminToken
     })).status, 200)
+    assert.equal(await replacedClose, 4005)
     const replacementPoll = await fetch(base + `/v1/pair/${replacement.pairId}`, {
       headers: { Origin: newOrigin, 'X-Pairing-Secret': 'replacement-secret' }
     })
     assert.equal(replacementPoll.status, 200)
-    assert.equal((await replacementPoll.json() as { token: string }).token, token)
+    const { token: replacementToken } = await replacementPoll.json() as { token: string }
+    assert.ok(replacementToken)
+    assert.notEqual(replacementToken, token)
     assert.equal((await send('/v1/snapshots', payload('old-origin-after-repair'), {
       Origin: extensionOrigin, Authorization: `Bearer ${token}`
     })).status, 403)
+    // newOrigin is already the paired origin, so only token rotation can reject the old token here.
+    assert.equal((await send('/v1/snapshots', payload('old-token-after-repair'), {
+      Origin: newOrigin, Authorization: `Bearer ${token}`
+    })).status, 403)
+    assert.equal((await send('/v1/snapshots', payload('after-repair'), {
+      Origin: newOrigin, Authorization: `Bearer ${replacementToken}`
+    })).status, 200)
+
+    assert.equal((await send('/v1/unpair', {}, {
+      Authorization: `Bearer ${replacementToken}`
+    })).status, 403)
+    assert.equal((await send('/v1/unpair', {}, { Origin: newOrigin })).status, 401)
+    assert.equal((await send('/v1/unpair', {}, {
+      Origin: newOrigin, Authorization: 'Bearer wrong'
+    })).status, 403)
+    // extensionOrigin stopped being the paired origin when the replacement was approved.
+    assert.equal((await send('/v1/unpair', {}, {
+      Origin: extensionOrigin, Authorization: `Bearer ${replacementToken}`
+    })).status, 403)
+
+    ws2 = new WebSocket(`ws://127.0.0.1:${port}/v1/live`, { origin: newOrigin })
+    await new Promise<void>((resolve, reject) => {
+      ws2!.once('open', () => resolve())
+      ws2!.once('error', reject)
+    })
+    ws2.send(JSON.stringify({ type: 'hello', token: replacementToken }))
+    const replacementAck = await new Promise<{ type: string }>((resolve, reject) => {
+      ws2!.once('message', data => {
+        try { resolve(JSON.parse(data.toString())) } catch (error) { reject(error) }
+      })
+    })
+    assert.equal(replacementAck.type, 'hello-ack')
+
+    const unpairedClose = new Promise<number>(resolve => ws2!.once('close', code => resolve(code)))
+    const unpairResponse = await send('/v1/unpair', {}, {
+      Origin: newOrigin, Authorization: `Bearer ${replacementToken}`
+    })
+    assert.equal(unpairResponse.status, 200)
+    assert.deepEqual(await unpairResponse.json(), { unpaired: true })
+    assert.equal(await unpairedClose, 4004)
+
+    const healthResponse = await fetch(base + '/health')
+    const health = await healthResponse.json() as { paired: boolean; extensionConnected: boolean }
+    assert.equal(health.paired, false)
+    assert.equal(health.extensionConnected, false)
+    assert.equal((await send('/v1/snapshots', payload('after-unpair'), {
+      Origin: newOrigin, Authorization: `Bearer ${replacementToken}`
+    })).status, 403)
   } finally {
     ws?.terminate()
+    ws2?.terminate()
     await closeServer(server)
     if (previousDir === undefined) delete process.env.MONDAY_BRIDGE_DATA_DIR
     else process.env.MONDAY_BRIDGE_DATA_DIR = previousDir
