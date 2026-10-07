@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Monday Task Bridge",
   "version": "0.2.0",
-  "description": "Captures Monday.com task data and sends it to the local bridge server.",
+  "description": "Read visible monday.com tasks and original images through a paired local MCP bridge.",
   "permissions": [
     "storage",
     "alarms",
