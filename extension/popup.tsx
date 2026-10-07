@@ -108,10 +108,11 @@ function Popup() {
           <h2 className="text-lg font-semibold mb-2">Pair with Bridge</h2>
           {config.status === 'pairing' && (pairCode || config.pairCode) ? (
             <div>
-              <p className="mb-2">Enter this code in your bridge CLI:</p>
+              <p className="mb-2">Run this command in PowerShell from the monday-task-bridge folder within 2 minutes:</p>
               <div className="text-2xl font-mono bg-slate-100 p-2 text-center rounded tracking-widest">
                 {pairCode || config.pairCode}
               </div>
+              <code className="block mt-2 p-2 rounded bg-slate-100 text-xs break-all">npm run pair -- {pairCode || config.pairCode}</code>
               <p className="text-sm text-slate-500 mt-2">Waiting for approval…</p>
             </div>
           ) : (

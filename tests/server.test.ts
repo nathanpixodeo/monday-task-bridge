@@ -73,13 +73,25 @@ test('pairing, origin restrictions, original image storage and live capture work
     const pair = await pairResponse.json() as { pairId: string; code: string }
     assert.match(pair.code, /^\d{6}$/)
 
+    // Extension service-worker GET requests can arrive without Origin.
+    // The secret still gates polling and ordinary web origins stay blocked.
+    assert.equal((await fetch(base + `/v1/pair/${pair.pairId}`, {
+      headers: { 'X-Pairing-Secret': 'long-random-secret' }
+    })).status, 200)
+    assert.equal((await fetch(base + `/v1/pair/${pair.pairId}`, {
+      headers: { 'X-Pairing-Secret': 'wrong-secret' }
+    })).status, 404)
+    assert.equal((await fetch(base + `/v1/pair/${pair.pairId}`, {
+      headers: { Origin: 'https://evil.example', 'X-Pairing-Secret': 'long-random-secret' }
+    })).status, 403)
+
     const adminToken = await store.getAdminToken()
     assert.equal((await send('/v1/pair/approve', { code: pair.code }, {
       'X-Bridge-Admin-Token': adminToken
     })).status, 200)
 
     const poll = await fetch(base + `/v1/pair/${pair.pairId}`, {
-      headers: { Origin: extensionOrigin, 'X-Pairing-Secret': 'long-random-secret' }
+      headers: { 'X-Pairing-Secret': 'long-random-secret' }
     })
     assert.equal(poll.status, 200)
     const { token } = await poll.json() as { token: string }

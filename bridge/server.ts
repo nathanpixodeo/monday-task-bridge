@@ -281,7 +281,7 @@ async function handlePairPoll(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   pairId: string,
-  origin: string
+  origin: string | undefined
 ): Promise<void> {
   const secret = req.headers['x-pairing-secret'] as string | undefined
   if (!secret) {
@@ -507,11 +507,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       return
     }
 
-    // GET /v1/pair/:pairId – extension route (requires chrome-extension Origin)
+    // GET /v1/pair/:pairId – extension poll. Chromium may omit Origin on GET;
+    // the pairing secret is required and web origins are rejected above.
     const pairMatch = pathname.match(/^\/v1\/pair\/([a-f0-9]+)$/)
     if (method === 'GET' && pairMatch) {
-      if (!origin || !isExtensionOrigin(origin)) {
-        json(res, 403, { error: 'Forbidden: requires chrome-extension Origin' })
+      if (origin && !isExtensionOrigin(origin)) {
+        json(res, 403, { error: 'Forbidden: invalid pairing Origin' })
         return
       }
       await handlePairPoll(req, res, pairMatch[1], origin)

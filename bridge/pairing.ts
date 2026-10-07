@@ -92,7 +92,10 @@ export class PairingManager {
     const req = this._pending.get(pairId)
     if (!req) return null
     if (!safeCompare(req.secret, secret)) return null
-    if (req.origin && (!origin || !safeCompare(req.origin, origin))) return null
+    // Chromium can omit Origin on a GET from an extension service worker.
+    // The request still requires the high-entropy pairing secret. When Origin
+    // is present, it must match the extension that created the request.
+    if (req.origin && origin && !safeCompare(req.origin, origin)) return null
     if (this._isExpired(req)) {
       this._pending.delete(pairId)
       return null
