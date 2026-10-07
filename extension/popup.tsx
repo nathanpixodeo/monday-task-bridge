@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Config } from './helpers/storage'
@@ -60,6 +60,17 @@ const haloTint: Record<Look, string> = {
   offline: 'bg-rose-500/35',
   connected: 'bg-emerald-500/35'
 }
+
+const rippleBorder: Record<Look, string> = {
+  brand: 'border-violet-400',
+  off: 'border-slate-400',
+  connecting: 'border-amber-400',
+  offline: 'border-rose-400',
+  connected: 'border-emerald-400'
+}
+
+// A local bridge answers in milliseconds; without a hold the amber sweep would never be seen
+const MIN_CONNECTING_MS = 900
 
 const toneStyles: Record<Tone, { box: string; icon: string }> = {
   danger: { box: 'border-rose-500/25 bg-rose-500/10 text-rose-50', icon: 'text-rose-400' },
@@ -184,6 +195,33 @@ function useNow(intervalMs: number): number {
   }, [intervalMs])
 
   return now
+}
+
+/** The mode to draw: holds 'connecting' for MIN_CONNECTING_MS so a fast connect still shows its sweep. */
+function useDisplayMode(mode: Mode | null): Mode | null {
+  const [shown, setShown] = useState<Mode | null>(mode)
+  const connectingSince = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (mode === null) return
+    if (mode === 'connecting') {
+      connectingSince.current ??= Date.now()
+      setShown(mode)
+      return
+    }
+    const since = connectingSince.current
+    connectingSince.current = null
+    const wait = since === null ? 0 : MIN_CONNECTING_MS - (Date.now() - since)
+    if (wait <= 0) {
+      setShown(mode)
+      return
+    }
+    const timer = setTimeout(() => setShown(mode), wait)
+    return () => clearTimeout(timer)
+  }, [mode])
+
+  // Before the effect first runs (config just loaded) draw the real mode, never a stale one
+  return shown ?? mode
 }
 
 // ─── Icons ───────────────────────────────────────────────────────────
@@ -621,20 +659,61 @@ function PowerButton({
   disabled: boolean
   onToggle: () => void
 }) {
+  const [ripple, setRipple] = useState<{ key: number; look: Look } | null>(null)
+  const pressRef = useRef<HTMLSpanElement>(null)
   const look = lookOf[mode]
   const on = mode === 'connected' || mode === 'connecting' || mode === 'offline'
   const pulsing = mode === 'connecting' || mode === 'pairing' || requesting
   const arcFill = mode === 'connected' || mode === 'offline' ? 1 : (pairingProgress ?? 0)
-  const arcStroke = mode === 'offline' ? 'stroke-rose-500' : mode === 'pairing' ? 'stroke-violet-400' : 'stroke-emerald-400'
+  const arcStroke =
+    mode === 'offline'
+      ? 'stroke-rose-500'
+      : mode === 'pairing'
+        ? 'stroke-violet-400'
+        : mode === 'connected'
+          ? 'stroke-emerald-400'
+          : 'stroke-slate-400'
   const arcOpacity = arcFill === 0 ? 'opacity-0' : mode === 'offline' ? 'opacity-60' : 'opacity-100'
   const spinnerStroke = mode === 'connecting' ? 'stroke-amber-400' : requesting ? 'stroke-violet-400' : null
+
+  const press = () => {
+    // The ripple takes the color of where the tap is heading, so turning on and off feel different
+    setRipple({ key: Date.now(), look: mode === 'unpaired' ? 'brand' : on ? 'off' : 'connecting' })
+    // Web Animations replays the squeeze in place; remounting the disc would cancel its color cross-fade
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      pressRef.current?.animate(
+        [
+          { transform: 'scale(1)' },
+          { transform: 'scale(0.88)', offset: 0.3 },
+          { transform: 'scale(1.04)', offset: 0.65 },
+          { transform: 'scale(1)' }
+        ],
+        { duration: 450, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)' }
+      )
+    }
+    onToggle()
+  }
 
   return (
     <div className="relative size-[152px]">
       <div
         aria-hidden="true"
-        className={`absolute -inset-4 rounded-full blur-2xl transition duration-300 ${haloTint[look]} ${pulsing ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+        className={`absolute -inset-4 rounded-full blur-2xl transition duration-500 motion-reduce:animate-none ${haloTint[look]} ${pulsing ? 'animate-pulse' : look === 'connected' ? 'animate-breathe' : ''}`}
       />
+      {look === 'connected' && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-2 animate-glow-burst rounded-full bg-emerald-400/45 blur-md motion-reduce:hidden"
+        />
+      )}
+      {ripple && (
+        <span
+          key={ripple.key}
+          aria-hidden="true"
+          onAnimationEnd={() => setRipple(null)}
+          className={`pointer-events-none absolute inset-[18px] animate-power-ripple rounded-full border-2 motion-reduce:hidden ${rippleBorder[ripple.look]}`}
+        />
+      )}
       <svg aria-hidden="true" viewBox="0 0 152 152" fill="none" className="absolute inset-0 size-full -rotate-90">
         <circle cx="76" cy="76" r={RING_RADIUS} strokeWidth="3" className="stroke-white/10" />
         <circle
@@ -645,7 +724,11 @@ function PowerButton({
           strokeLinecap="round"
           strokeDasharray={RING_LENGTH}
           strokeDashoffset={RING_LENGTH * (1 - arcFill)}
-          className={`transition-[stroke-dashoffset,stroke,opacity] duration-300 ${arcStroke} ${arcOpacity}`}
+          // The ring draws in on connect and drains on disconnect; it fades only after draining
+          style={{
+            transition: `stroke-dashoffset 700ms cubic-bezier(0.2, 0.7, 0.2, 1), stroke 300ms ease, opacity 300ms ease ${arcFill === 0 ? '600ms' : '0ms'}`
+          }}
+          className={`${arcStroke} ${arcOpacity}`}
         />
       </svg>
       <svg
@@ -671,24 +754,24 @@ function PowerButton({
         aria-label="Bridge connection"
         aria-describedby="hero-subtitle"
         disabled={disabled}
-        onClick={onToggle}
-        className={`absolute inset-[18px] grid place-items-center rounded-full transition duration-200 focus-visible:ring-4 focus-visible:ring-white/40 focus-visible:outline-hidden ${discGlow[look]} ${disabled ? 'cursor-default' : 'cursor-pointer hover:brightness-110 active:scale-95'}`}
+        onClick={press}
+        className={`absolute inset-[18px] rounded-full transition-[box-shadow,filter] duration-500 focus-visible:ring-4 focus-visible:ring-white/40 focus-visible:outline-hidden ${discGlow[look]} ${disabled ? 'cursor-default' : 'cursor-pointer hover:brightness-110'}`}
       >
-        {/* Gradients cannot be interpolated, so each look is its own layer and they cross-fade */}
-        {LOOKS.map((key) => (
-          <span
-            key={key}
-            aria-hidden="true"
-            className={`absolute inset-0 rounded-full bg-linear-to-b transition-opacity duration-300 ${discGradient[key]} ${key === look ? 'opacity-100' : 'opacity-0'}`}
+        <span ref={pressRef} aria-hidden="true" className="absolute inset-0 grid place-items-center rounded-full">
+          {/* Gradients cannot be interpolated, so each look is its own layer. The new one fades in on
+              top while the old one stays opaque underneath; fading both at once dims the disc midway. */}
+          {LOOKS.map((key) => (
+            <span
+              key={key}
+              className={`absolute inset-0 rounded-full bg-linear-to-b transition-opacity ${discGradient[key]} ${key === look ? 'z-[1] opacity-100 duration-500' : 'z-0 opacity-0 delay-500 duration-0'}`}
+            />
+          ))}
+          <span className="absolute inset-0 z-[2] rounded-full bg-linear-to-b from-white/20 via-white/0 to-black/10" />
+          <PowerGlyph
+            key={look}
+            className={`relative z-[3] size-[46px] animate-glyph-pop transition-colors duration-300 motion-reduce:animate-none ${look === 'off' ? 'text-slate-300' : 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.25)]'}`}
           />
-        ))}
-        <span
-          aria-hidden="true"
-          className="absolute inset-0 rounded-full bg-linear-to-b from-white/20 via-white/0 to-black/10"
-        />
-        <PowerGlyph
-          className={`relative size-[46px] transition-colors duration-300 ${look === 'off' ? 'text-slate-300' : 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.25)]'}`}
-        />
+        </span>
       </button>
     </div>
   )
@@ -760,7 +843,12 @@ function Hero({
         onToggle={onToggle}
       />
       <div aria-live="polite" className="mt-5">
-        <h2 className="text-[22px] leading-7 font-semibold tracking-tight text-white">{copy[mode].title}</h2>
+        <h2
+          key={mode}
+          className="animate-fade-in text-[22px] leading-7 font-semibold tracking-tight text-white motion-reduce:animate-none"
+        >
+          {copy[mode].title}
+        </h2>
       </div>
       <p id="hero-subtitle" className="mt-1 text-sm leading-5 text-slate-400 tabular-nums">
         {copy[mode].subtitle}
@@ -1096,6 +1184,7 @@ function SettingsView({
 
 function Popup() {
   const config = useConfig()
+  const displayMode = useDisplayMode(config ? getMode(config) : null)
   // Reachability only matters before pairing; afterwards the worker's status says it
   const health = useBridgeHealth(config !== null && !config.paired)
   const [view, setView] = useState<View>('main')
@@ -1113,7 +1202,7 @@ function Popup() {
   // Settings only make sense while paired; an unpair from elsewhere drops back to the main view
   if (view === 'settings' && !config.paired && !unpairing) setView('main')
 
-  const mode = getMode(config)
+  const mode = displayMode ?? getMode(config)
   const error = config.error ?? localError
   const captureBusy = capturing || config.capturing
   const showBridgeHint = mode === 'unpaired' && bridgeHint && health === 'down'

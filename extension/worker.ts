@@ -227,7 +227,8 @@ async function pollPairing(pairId: string, secret: string) {
           paired: true,
           token: body.token,
           enabled: true,
-          status: 'disconnected',
+          // connectWs runs next; 'connecting' avoids a flash of the offline state after pairing
+          status: 'connecting',
           pairId: null,
           pairingSecret: null,
           pairCode: null,
@@ -391,7 +392,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'set-enabled') {
     ;(async () => {
       if (msg.enabled === true) {
-        await setConfig({ enabled: true })
+        // Write 'connecting' with the switch so the popup never flashes the offline state in between
+        await setConfig({ enabled: true, status: 'connecting' })
         connectWs()
       } else {
         disconnectWs()
