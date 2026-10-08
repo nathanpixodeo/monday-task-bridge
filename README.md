@@ -6,7 +6,7 @@ A local Chrome extension and MCP server that let an AI agent read monday.com tas
 
 ## What it does
 
-1. The extension detects a monday task you open and, when auto-sync is enabled, starts a capture in an **inactive temporary tab**. The tab is closed after capture.
+1. The extension detects a monday task you open (auto-sync), or an agent asks for a task by link. It loads the task in an **invisible frame** inside the extension's offscreen document: no tab or window opens, and your own tabs are not touched. The frame is removed after capture.
 2. It reads task fields, updates, replies, and Files links from the rendered page. It scrolls through lists that load incrementally. For links identified as original downloads, it retrieves the file using the browser session and checks the actual image bytes.
 3. It sends the snapshot to a bridge bound to `127.0.0.1:3457`. A separate MCP process exposes the cached data and can request a fresh capture.
 
@@ -32,7 +32,7 @@ npm run build
 npm run bridge
 ```
 
-Leave the bridge terminal running. In Chrome, open `chrome://extensions`, enable **Developer mode**, select **Load unpacked**, and choose this repository's `dist/extension` directory. Open the extension popup. It checks that the bridge is running; tap the power button to pair. The popup shows a six-digit code and the exact command, each with a copy button. In a second terminal, run that command with your code, for example:
+Leave the bridge terminal running while you pair; afterwards you can close it, because the MCP server starts the bridge on its own. In Chrome, open `chrome://extensions`, enable **Developer mode**, select **Load unpacked**, and choose this repository's `dist/extension` directory. Open the extension popup. It checks that the bridge is running; tap the power button to pair. The popup shows a six-digit code and the exact command, each with a copy button. In a second terminal, run that command with your code, for example:
 
 ```powershell
 npm run pair -- 123456
@@ -62,7 +62,7 @@ In a macOS/Linux shell, use `curl http://127.0.0.1:3457/health`.
 
 ## Connect an MCP client
 
-The bridge (`npm run bridge`) and the MCP server are **separate processes**. Keep the bridge running; the MCP client starts the stdio server. From the repository root, add it to Codex with:
+The bridge and the MCP server are **separate processes**. The MCP client starts the stdio server, and the MCP server starts the bridge in the background whenever it is not running (its log goes to `bridge.log` in the data directory), so you do not need to keep `npm run bridge` open once paired. From the repository root, add it to Codex with:
 
 ```powershell
 $bridgeMcp = (Resolve-Path .\dist\bridge\mcp.js).Path
@@ -74,7 +74,7 @@ For another stdio MCP client, set `command` to `node` and `args` to the absolute
 | MCP tool | Result |
 | --- | --- |
 | `monday_bridge_status` | Bridge health, pairing, and extension connection state. |
-| `monday_read_task` | Fresh snapshot of any task by `url`, or by `boardId` + `itemId` (optional `accountHost`, defaulting to the host of the latest cached task). The extension loads the task in a background tab, reads it, and closes the tab; you do not need to open it. Waits up to 180 seconds. |
+| `monday_read_task` | Fresh snapshot of any task by `url`, or by `boardId` + `itemId` (optional `accountHost`, defaulting to the host of the latest cached task). The extension loads the task in an invisible frame and reads it; no tab opens and you do not need to open the task. Waits up to 180 seconds. |
 | `monday_read_open_task` | Fresh snapshot from the active monday task tab, or the first open task tab if another tab is active. Waits up to 180 seconds. |
 | `monday_get_task` | Latest cached snapshot, optionally filtered by `boardId` and/or `itemId`. |
 | `monday_get_image` | Original PNG, JPEG, GIF, or WebP bytes for a ready attachment ID. |
@@ -85,6 +85,8 @@ Typical agent flow: call `monday_bridge_status`, then `monday_read_task` with th
 ## Local data and trust boundary
 
 The receiver listens on loopback only. Browser web origins are rejected. A six-digit pairing code needs local CLI approval; afterwards extension requests require a bearer token and the paired extension origin. The MCP server uses a separate local admin token. **Unpair** in the popup revokes the extension token on the bridge and forgets the paired extension. Each new pairing issues a fresh token, so a token from an earlier pairing stops working, including one left behind by an unpair while the bridge was offline.
+
+monday refuses to be shown inside frames, so the extension installs one browser rule that removes the `X-Frame-Options` and `Content-Security-Policy` response headers. The rule applies only to monday frames loaded outside any tab and started by this extension (or by monday inside such a frame). monday pages in your own tabs keep their headers.
 
 Snapshots, image bytes, and tokens are stored **unencrypted** under the current OS user's profile:
 
@@ -102,6 +104,7 @@ Snapshots, image bytes, and tokens are stored **unencrypted** under the current 
 - **`CAPTURE_TIMEOUT`:** A live capture did not finish within 180 seconds. Check the popup error and retry one task at a time.
 - **`NO_SNAPSHOT`:** No cached task matches the requested IDs, or the MCP process could not obtain a capture. Check `monday_bridge_status` first.
 - **No task tab found:** Call `monday_read_task` with the task URL instead, or open a task in the same Chrome profile as the extension and call `monday_read_open_task` again. Board pages without an open task are not captured.
+- **Hidden frame errors** ("monday did not open/render the task in the hidden frame"): sign in to monday in the extension's Chrome profile. If you are signed in, monday may be blocking embedded loading; open `chrome://extensions`, select **Inspect views: offscreen.html** on the extension card while a capture runs, and check the frame's console. Captures never fall back to opening a tab.
 - **Reading a task by link:** Chrome must be running with the extension's power button on, and the profile must be signed in to the monday account that owns the task. `INVALID_TARGET` means the URL is not a `https://<account>.monday.com/boards/<id>/pulses/<id>` task link, or no account host is known for a board and item ID.
 - **Capture incomplete:** Read `warnings`. monday can change its DOM, virtualize updates, hide Files links, or deny an original download. A `complete: false` snapshot is still usable for the data it contains; it does not claim to include everything. Even `complete: true` reflects only what the page exposed to the extractor.
 - **`IMAGE_ORIGINAL_UNAVAILABLE` or image unavailable:** Only PNG, JPEG, GIF, and WebP originals are accepted after byte-level validation. SVG, other files, thumbnails, failed downloads, and images over **25 MB each** or **75 MB per capture** are not returned as original images. Grant a requested image-host permission in the popup and reopen the task when appropriate.

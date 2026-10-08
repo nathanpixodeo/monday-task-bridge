@@ -267,6 +267,10 @@ async function pollPairing(pairId: string, secret: string) {
 ;(async () => {
   // A restarted worker has no capture in flight
   const config = await setConfig({ capturing: false })
+  // Frames left by a previous worker instance can no longer report to anyone
+  chrome.offscreen.closeDocument().catch(() => {})
+  // Session rules are cleared when the browser restarts, so install the framing rule on every start
+  installHiddenFrameRule().catch((err) => console.error('Could not install the hidden-frame rule', err))
   if (config.status === 'pairing' && config.pairId && config.pairingSecret) {
     pollPairing(config.pairId, config.pairingSecret)
   } else {
@@ -441,10 +445,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'page-navigated') {
     const url = msg.url as string
-    // Only auto-sync from active user tabs — not temporary extraction tabs
-    if (sender.tab && sender.tab.active && sender.tab.id !== undefined && !temporaryTabIds.has(sender.tab.id)) {
+    // Only auto-sync from the tab the user is looking at; capture frames have no tab and never report
+    if (sender.tab?.active && sender.tab.id !== undefined) {
       handleAutoSync(url, sender.tab.id)
     }
+    return false
+  }
+
+  if (msg.type === 'hidden-extract-result') {
+    // Capture frames live in the offscreen document, never in a tab; the random ID ties the result to its capture
+    if (!sender.tab) hiddenCaptures.get(msg.captureId)?.(msg.result as ExtractResult)
     return false
   }
 
@@ -523,10 +533,116 @@ function parseMondayUrl(url: string): { accountHost: string; boardId: string; it
 
 // ─── Capture ─────────────────────────────────────────────────────────
 
-// Set of tab IDs that are temporary extraction tabs — content scripts must ignore these
-const temporaryTabIds = new Set<number>()
 // Auto-sync, manual and MCP captures can overlap; `capturing` stays true until the last one ends
 let activeCaptures = 0
+
+// ─── Hidden capture frames ───────────────────────────────────────────
+//
+// Each capture loads its task in an invisible iframe of an offscreen document, so no tab or window
+// ever appears. The content script in that frame reads the task and reports `hidden-extract-result`.
+
+const HIDDEN_FRAME_RULE_ID = 1
+const OFFSCREEN_IDLE_MS = 30_000
+
+/** Pending hidden captures by capture ID. */
+const hiddenCaptures = new Map<string, (result: ExtractResult) => void>()
+let offscreenReady: Promise<void> | null = null
+let offscreenIdleTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * monday refuses to be framed (X-Frame-Options / CSP frame-ancestors). Drop those headers, but only
+ * for sub-frames loaded outside any tab and started by this extension or by monday inside such a
+ * frame, so the user's own monday tabs keep their framing protection.
+ */
+async function installHiddenFrameRule() {
+  const { RuleActionType, HeaderOperation, ResourceType } = chrome.declarativeNetRequest
+  await chrome.declarativeNetRequest.updateSessionRules({
+    removeRuleIds: [HIDDEN_FRAME_RULE_ID],
+    addRules: [
+      {
+        id: HIDDEN_FRAME_RULE_ID,
+        priority: 1,
+        action: {
+          type: RuleActionType.MODIFY_HEADERS,
+          responseHeaders: [
+            { header: 'x-frame-options', operation: HeaderOperation.REMOVE },
+            { header: 'content-security-policy', operation: HeaderOperation.REMOVE }
+          ]
+        },
+        condition: {
+          requestDomains: ['monday.com'],
+          resourceTypes: [ResourceType.SUB_FRAME],
+          initiatorDomains: [chrome.runtime.id, 'monday.com'],
+          tabIds: [chrome.tabs.TAB_ID_NONE]
+        }
+      }
+    ]
+  })
+}
+
+async function ensureOffscreen(): Promise<void> {
+  if (offscreenIdleTimer !== null) {
+    clearTimeout(offscreenIdleTimer)
+    offscreenIdleTimer = null
+  }
+  offscreenReady ??= (async () => {
+    if (await chrome.offscreen.hasDocument()) return
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: [chrome.offscreen.Reason.DOM_SCRAPING],
+      justification: 'Load monday task pages invisibly so captures never open a tab'
+    })
+  })().catch((err) => {
+    offscreenReady = null
+    throw err
+  })
+  return offscreenReady
+}
+
+/** monday's app is heavy, so close the offscreen document once no capture has used it for a while. */
+function closeOffscreenWhenIdle() {
+  if (hiddenCaptures.size > 0) return
+  if (offscreenIdleTimer !== null) clearTimeout(offscreenIdleTimer)
+  offscreenIdleTimer = setTimeout(() => {
+    offscreenIdleTimer = null
+    if (hiddenCaptures.size > 0) return
+    offscreenReady = null
+    chrome.offscreen.closeDocument().catch(() => {})
+  }, OFFSCREEN_IDLE_MS)
+}
+
+async function sendToOffscreen(message: { type: string; captureId: string; url?: string }): Promise<void> {
+  // A just-created offscreen page may not be listening yet
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await chrome.runtime.sendMessage({ target: 'offscreen', ...message })
+      return
+    } catch (err) {
+      if (attempt >= 10) throw err
+      await delay(100)
+    }
+  }
+}
+
+/** Loads `url` in an invisible frame and resolves with what the content script read there. */
+async function extractHidden(url: string, timeoutMs: number): Promise<ExtractResult> {
+  await ensureOffscreen()
+  const captureId = crypto.randomUUID()
+  const result = new Promise<ExtractResult>((resolve) => hiddenCaptures.set(captureId, resolve))
+  try {
+    await sendToOffscreen({ type: 'open-frame', captureId, url })
+    return await Promise.race([
+      result,
+      delay(timeoutMs).then((): never => {
+        throw new Error('The hidden frame did not finish reading the task in time')
+      })
+    ])
+  } finally {
+    hiddenCaptures.delete(captureId)
+    sendToOffscreen({ type: 'close-frame', captureId }).catch(() => {})
+    closeOffscreenWhenIdle()
+  }
+}
 
 /** The task open in the active tab of the current window, else the first open monday task tab. */
 async function findTaskTabUrl(): Promise<string | undefined> {
@@ -557,37 +673,11 @@ async function performCapture(requestId?: string, reason: 'mcp' | 'auto' | 'manu
     return
   }
 
-  let tempTabId: number | undefined
   activeCaptures++
   try {
     await setConfig({ capturing: true })
-    // Open a temporary inactive tab for extraction
-    const tab = await chrome.tabs.create({ url: targetUrl, active: false })
-    tempTabId = tab.id
-    if (tempTabId !== undefined) {
-      temporaryTabIds.add(tempTabId)
-    }
-
-    // Wait for tab to load
-    if ((await chrome.tabs.get(tempTabId!)).status !== 'complete') {
-      await waitForTabLoad(tempTabId!, 15_000)
-    }
-
-    // Inject content script into temp tab (it may already be injected via manifest match,
-    // but sendMessage will reach the injected one)
-    // Small delay for content script initialization
-    await delay(1000)
-
-    // Send extract message
-    let extractRes: ExtractResult
-    try {
-      extractRes = await Promise.race([
-        chrome.tabs.sendMessage(tempTabId!, { type: 'extract-task' }) as Promise<ExtractResult>,
-        delay(100_000).then((): never => { throw new Error('Task extraction timed out') })
-      ])
-    } catch (e) {
-      throw new Error(`Content script communication failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
+    // Read the task in an invisible frame: no tab opens and the user's own tabs are never touched
+    const extractRes = await extractHidden(targetUrl, 100_000)
     if (extractRes.error) throw new Error(extractRes.error)
 
     // Process results
@@ -748,10 +838,6 @@ async function performCapture(requestId?: string, reason: 'mcp' | 'auto' | 'manu
     }
     await setConfig({ error: `Capture failed: ${errMsg}` })
   } finally {
-    if (tempTabId !== undefined) {
-      temporaryTabIds.delete(tempTabId)
-      chrome.tabs.remove(tempTabId).catch(() => { /* tab may already be closed */ })
-    }
     activeCaptures--
     await setConfig({ capturing: activeCaptures > 0 })
   }
@@ -786,52 +872,6 @@ interface ExtractResult {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function waitForTabLoad(tabId: number, timeoutMs: number): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    let resolved = false
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true
-        chrome.tabs.onUpdated.removeListener(listener)
-        chrome.tabs.onRemoved.removeListener(removedListener)
-        reject(new Error('Task tab did not finish loading'))
-      }
-    }, timeoutMs)
-
-    function listener(updatedTabId: number, info: { status?: string }) {
-      if (updatedTabId === tabId && info.status === 'complete') {
-        if (!resolved) {
-          resolved = true
-          clearTimeout(timer)
-          chrome.tabs.onUpdated.removeListener(listener)
-          chrome.tabs.onRemoved.removeListener(removedListener)
-          resolve()
-        }
-      }
-    }
-    function removedListener(removedTabId: number) {
-      if (removedTabId === tabId && !resolved) {
-        resolved = true
-        clearTimeout(timer)
-        chrome.tabs.onUpdated.removeListener(listener)
-        chrome.tabs.onRemoved.removeListener(removedListener)
-        reject(new Error('Task tab closed while loading'))
-      }
-    }
-    chrome.tabs.onUpdated.addListener(listener)
-    chrome.tabs.onRemoved.addListener(removedListener)
-    chrome.tabs.get(tabId).then(tab => {
-      if (!resolved && tab.status === 'complete') {
-        resolved = true
-        clearTimeout(timer)
-        chrome.tabs.onUpdated.removeListener(listener)
-        chrome.tabs.onRemoved.removeListener(removedListener)
-        resolve()
-      }
-    }).catch(() => removedListener(tabId))
-  })
 }
 
 /**

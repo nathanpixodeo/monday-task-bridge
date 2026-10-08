@@ -4,39 +4,65 @@
  * without using any private APIs, cookies, or innerHTML/eval.
  */
 
-let lastUrl = location.href
+import { HIDDEN_FRAME_PREFIX } from './helpers/hidden-frame'
 
-function checkUrlAndNotify() {
+function isTaskUrl(href: string): boolean {
   try {
-    const u = new URL(location.href)
-    if (u.hostname.endsWith('.monday.com') && /\/boards\/\d+(?:\/views\/\d+)?\/pulses\/\d+/.test(u.pathname)) {
-      chrome.runtime.sendMessage({ type: 'page-navigated', url: location.href })
-    }
+    const u = new URL(href)
+    return u.hostname.endsWith('.monday.com') && /\/boards\/\d+(?:\/views\/\d+)?\/pulses\/\d+/.test(u.pathname)
   } catch {
-    // Invalid URL, ignore
+    return false
   }
 }
 
-// Watch for SPA navigation
-new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href
-    checkUrlAndNotify()
-  }
-}).observe(document, { subtree: true, childList: true })
+/** The capture ID when this page runs in the extension's invisible capture frame, else null. */
+function hiddenFrameCaptureId(): string | null {
+  if (window === window.top || !window.name.startsWith(HIDDEN_FRAME_PREFIX)) return null
+  // Only the extension's own offscreen page may drive a capture, not any site that frames monday
+  const extensionOrigin = chrome.runtime.getURL('').replace(/\/$/, '')
+  if (location.ancestorOrigins?.[0] !== extensionOrigin) return null
+  return window.name.slice(HIDDEN_FRAME_PREFIX.length)
+}
 
-checkUrlAndNotify()
-
-// Listen for extraction requests from the worker
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type === 'extract-task') {
-    extractTask()
-      .then(sendResponse)
-      .catch((err) => sendResponse({ error: err instanceof Error ? err.message : String(err) }))
-    return true // async sendResponse
+/** Tells the worker about task pages the user opens, for auto-sync. */
+function watchNavigation() {
+  let lastUrl = location.href
+  const notify = () => {
+    if (isTaskUrl(location.href)) chrome.runtime.sendMessage({ type: 'page-navigated', url: location.href })
   }
-  return false
-})
+
+  // monday is a SPA: task changes rewrite the URL without a page load
+  new MutationObserver(() => {
+    if (location.href !== lastUrl) {
+      lastUrl = location.href
+      notify()
+    }
+  }).observe(document, { subtree: true, childList: true })
+
+  notify()
+}
+
+/** Reads the task this frame was opened for and reports straight to the worker. */
+async function runHiddenCapture(captureId: string) {
+  const report = (result: ExtractionResult | { error: string }) =>
+    chrome.runtime.sendMessage({ type: 'hidden-extract-result', captureId, result })
+
+  if (!isTaskUrl(location.href)) {
+    report({ error: `monday did not open the task in the hidden frame (it showed ${location.pathname}). Sign in to monday in this Chrome profile.` })
+    return
+  }
+  try {
+    // A cold app load inside a fresh frame is slower than in a tab, so allow longer for the panel
+    const result = await extractTask(60)
+    report(
+      result.title
+        ? result
+        : { error: 'monday did not render the task in the hidden frame (signed out, or monday blocked embedding)' }
+    )
+  } catch (err) {
+    report({ error: err instanceof Error ? err.message : String(err) })
+  }
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -100,10 +126,10 @@ interface ExtractionResult {
   error?: string
 }
 
-async function extractTask(): Promise<ExtractionResult> {
+async function extractTask(readyAttempts = 20): Promise<ExtractionResult> {
   const warnings: string[] = []
   let taskPanelReady = false
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < readyAttempts; attempt++) {
     const titleVisible = document.querySelector('[data-testid="item-header-title"], [aria-label="Item Title"], h1')
     const updatesVisible = findClickableByText(['updates'], 'button, [role="button"], [role="tab"]')
       .some(el => /^updates(?:\s*\/\s*\d+)?$/i.test((el.textContent || el.getAttribute('aria-label') || '').trim()))
@@ -640,6 +666,17 @@ async function extractTask(): Promise<ExtractionResult> {
     attachments,
     warnings
   }
+}
+
+// ─── Start ───────────────────────────────────────────────────────────
+
+// Runs last so every helper above is initialised before a capture can call it
+const hiddenCaptureId = hiddenFrameCaptureId()
+if (hiddenCaptureId !== null) {
+  void runHiddenCapture(hiddenCaptureId)
+} else if (window === window.top) {
+  // Other monday sub-frames (widgets, apps) are neither captures nor navigations to report
+  watchNavigation()
 }
 
 export { extractTask }

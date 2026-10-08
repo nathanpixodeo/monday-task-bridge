@@ -9,6 +9,9 @@
  *   monday_list_tasks       – list stored snapshots
  *   monday_bridge_status    – bridge health/connection status
  *
+ * The HTTP bridge is started automatically (detached) when a tool needs it and it is not
+ * running; tools that only read the local store never start it.
+ *
  * stdout is reserved for MCP JSON-RPC frames only.
  * All diagnostic output goes to stderr.
  */
@@ -16,6 +19,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import { ensureBridge } from './autostart.js'
 import { Store } from './store.js'
 import type { StoredSnapshot } from './store.js'
 
@@ -37,6 +41,35 @@ async function bridgeFetch(path: string, options: RequestInit = {}): Promise<Res
 
 async function getAdminToken(): Promise<string> {
   return store.getAdminToken()
+}
+
+let bridgeCheck: Promise<void> | undefined
+
+/**
+ * Makes sure the HTTP bridge is up, starting it when it is not. Concurrent tool calls share one
+ * attempt, but nothing is cached afterwards: each call re-checks the cheap local /health, so a
+ * bridge that stopped since the last call is started again instead of failing until a restart.
+ */
+async function bridgeReady(): Promise<void> {
+  bridgeCheck ??= ensureBridge({ base: BRIDGE_BASE, dataDir: store.dataDir })
+    .then(({ started, pid }) => {
+      if (started) process.stderr.write(`[mcp] Started bridge pid=${pid}\n`)
+    })
+    .finally(() => {
+      bridgeCheck = undefined
+    })
+  await bridgeCheck
+}
+
+const BRIDGE_UNAVAILABLE = 'BRIDGE_UNAVAILABLE'
+
+/** Tool result for a bridge that could not be started, or null when the error is something else. */
+function bridgeUnavailableResult(err: unknown) {
+  if (!(err instanceof Error) || !err.message.startsWith(`${BRIDGE_UNAVAILABLE}:`)) return null
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify({ error: BRIDGE_UNAVAILABLE, message: err.message }) }],
+    isError: true,
+  }
 }
 
 function snapshotSummary(s: StoredSnapshot): object {
@@ -66,6 +99,7 @@ const mcp = new McpServer({
 
 async function captureVia(path: string, body?: unknown) {
   try {
+    await bridgeReady()
     const adminToken = await getAdminToken()
     const res = await bridgeFetch(path, {
       method: 'POST',
@@ -100,6 +134,8 @@ async function captureVia(path: string, body?: unknown) {
     const data = await res.json()
     return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
   } catch (err: unknown) {
+    const unavailable = bridgeUnavailableResult(err)
+    if (unavailable) return unavailable
     const msg = err instanceof Error ? err.message : 'Unknown error'
     return {
       content: [{ type: 'text' as const, text: JSON.stringify({ error: 'NO_SNAPSHOT', message: msg }) }],
@@ -267,6 +303,7 @@ mcp.tool(
   {},
   async () => {
     try {
+      await bridgeReady()
       const res = await bridgeFetch('/health')
       if (!res.ok) {
         return {
@@ -276,7 +313,9 @@ mcp.tool(
       }
       const data = await res.json()
       return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
-    } catch {
+    } catch (err: unknown) {
+      const unavailable = bridgeUnavailableResult(err)
+      if (unavailable) return unavailable
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({
           error: 'BROWSER_OFFLINE',

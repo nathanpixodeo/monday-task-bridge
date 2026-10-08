@@ -12,7 +12,9 @@
   "permissions": [
     "storage",
     "alarms",
-    "tabs"
+    "tabs",
+    "offscreen",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://*.monday.com/*",
@@ -27,7 +29,8 @@
   "content_scripts": [
     {
       "matches": ["https://*.monday.com/*"],
-      "js": ["content.js"]
+      "js": ["content.js"],
+      "all_frames": true
     }
   ],
   "action": {

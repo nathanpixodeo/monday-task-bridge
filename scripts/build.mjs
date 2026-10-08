@@ -24,7 +24,7 @@ await build({
 })
 
 await build({
-  entryPoints: ['extension/worker.ts', 'extension/content.ts'],
+  entryPoints: ['extension/worker.ts', 'extension/content.ts', 'extension/offscreen.ts'],
   outdir: extensionOut,
   bundle: true,
   platform: 'browser',
@@ -46,4 +46,5 @@ await viteBuild({
 })
 
 await copyFile(resolve(root, 'extension/manifest.json'), resolve(extensionOut, 'manifest.json'))
+await copyFile(resolve(root, 'extension/offscreen.html'), resolve(extensionOut, 'offscreen.html'))
 await cp(resolve(root, 'extension/icons'), resolve(extensionOut, 'icons'), { recursive: true })
