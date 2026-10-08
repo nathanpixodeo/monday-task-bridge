@@ -1,5 +1,7 @@
 import { getConfig, setConfig, defaultConfig, unpairedFields } from './helpers/storage'
 import type { Config } from './helpers/storage'
+import { ITEM_QUERY, mapItem } from './helpers/monday-api'
+import type { ApiItem, MappedTask } from './helpers/monday-api'
 import type {
   TaskSnapshot,
   TaskAttachment,
@@ -86,7 +88,7 @@ async function connectWs() {
             reportCaptureError(msg.requestId, 'Not a monday task URL')
             return
           }
-          performCapture(msg.requestId, 'mcp', msg.url).catch(async (err) => {
+          performCapture(msg.requestId, msg.url).catch(async (err) => {
             reportCaptureError(msg.requestId, String(err))
           })
         }
@@ -267,10 +269,6 @@ async function pollPairing(pairId: string, secret: string) {
 ;(async () => {
   // A restarted worker has no capture in flight
   const config = await setConfig({ capturing: false })
-  // Frames left by a previous worker instance can no longer report to anyone
-  chrome.offscreen.closeDocument().catch(() => {})
-  // Session rules are cleared when the browser restarts, so install the framing rule on every start
-  installHiddenFrameRule().catch((err) => console.error('Could not install the hidden-frame rule', err))
   if (config.status === 'pairing' && config.pairId && config.pairingSecret) {
     pollPairing(config.pairId, config.pairingSecret)
   } else {
@@ -363,36 +361,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true
   }
 
-  if (msg.type === 'capture-now') {
-    ;(async () => {
-      const config = await getConfig()
-      if (!config.paired) {
-        sendResponse({ error: 'Pair with the bridge first.' })
-        return
-      }
-      if (!config.enabled) {
-        sendResponse({ error: 'Turn the connection on first.' })
-        return
-      }
-      const url = await findTaskTabUrl()
-      if (!url) {
-        sendResponse({ error: 'Open a monday task first (URL with /boards/<id>/pulses/<id>).' })
-        return
-      }
-      await performCapture(undefined, 'manual', url)
-      sendResponse({ ok: true })
-    })()
-    return true
-  }
-
-  if (msg.type === 'set-auto-sync') {
-    ;(async () => {
-      await setConfig({ autoSync: msg.enabled === true })
-      sendResponse({ ok: true })
-    })()
-    return true
-  }
-
   if (msg.type === 'set-enabled') {
     ;(async () => {
       if (msg.enabled === true) {
@@ -443,64 +411,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false
   }
 
-  if (msg.type === 'page-navigated') {
-    const url = msg.url as string
-    // Only auto-sync from the tab the user is looking at; capture frames have no tab and never report
-    if (sender.tab?.active && sender.tab.id !== undefined) {
-      handleAutoSync(url, sender.tab.id)
-    }
-    return false
-  }
-
-  if (msg.type === 'hidden-extract-result') {
-    // Capture frames live in the offscreen document, never in a tab; the random ID ties the result to its capture
-    if (!sender.tab) hiddenCaptures.get(msg.captureId)?.(msg.result as ExtractResult)
-    return false
-  }
-
-  if (msg.type === 'request-image-permission') {
-    // This must be called from a popup gesture context
-    const origins = msg.origins as string[]
-    ;(async () => {
-      try {
-        const granted = await chrome.permissions.request({ origins })
-        sendResponse({ granted })
-      } catch (e: unknown) {
-        sendResponse({ granted: false, error: e instanceof Error ? e.message : String(e) })
-      }
-    })()
-    return true
-  }
-
   return false
 })
-
-// ─── Auto-sync for active user tabs ──────────────────────────────────
-
-let lastAutoSyncUrl = ''
-let lastAutoSyncTime = 0
-const AUTO_SYNC_DEBOUNCE_MS = 5000
-
-async function handleAutoSync(url: string, tabId?: number) {
-  const config = await getConfig()
-  if (!config.paired || !config.enabled || !config.autoSync) return
-
-  // Parse URL to verify it's a task URL
-  if (!isMondayTaskUrl(url)) return
-
-  const now = Date.now()
-  if (url === lastAutoSyncUrl && now - lastAutoSyncTime < AUTO_SYNC_DEBOUNCE_MS) return
-  lastAutoSyncUrl = url
-  lastAutoSyncTime = now
-
-  // Give the page a moment to load
-  setTimeout(() => {
-    performCapture(undefined, 'auto', url).catch((err) => {
-      console.error('Auto-sync capture failed:', err)
-      setConfig({ error: `Auto-sync failed: ${err instanceof Error ? err.message : String(err)}` })
-    })
-  }, 3000)
-}
 
 // ─── URL parsing ─────────────────────────────────────────────────────
 
@@ -533,115 +445,65 @@ function parseMondayUrl(url: string): { accountHost: string; boardId: string; it
 
 // ─── Capture ─────────────────────────────────────────────────────────
 
-// Auto-sync, manual and MCP captures can overlap; `capturing` stays true until the last one ends
+// Agent reads can overlap; `capturing` stays true until the last one ends
 let activeCaptures = 0
 
-// ─── Hidden capture frames ───────────────────────────────────────────
-//
-// Each capture loads its task in an invisible iframe of an offscreen document, so no tab or window
-// ever appears. The content script in that frame reads the task and reports `hidden-extract-result`.
-
-const HIDDEN_FRAME_RULE_ID = 1
-const OFFSCREEN_IDLE_MS = 30_000
-
-/** Pending hidden captures by capture ID. */
-const hiddenCaptures = new Map<string, (result: ExtractResult) => void>()
-let offscreenReady: Promise<void> | null = null
-let offscreenIdleTimer: ReturnType<typeof setTimeout> | null = null
-
 /**
- * monday refuses to be framed (X-Frame-Options / CSP frame-ancestors). Drop those headers, but only
- * for sub-frames loaded outside any tab and started by this extension or by monday inside such a
- * frame, so the user's own monday tabs keep their framing protection.
+ * monday's web app sends `x-csrf-token` on its API calls. Like other Rails apps it embeds the token in
+ * the app page, so read it from there. The token stays inside the extension; callers get the source only.
  */
-async function installHiddenFrameRule() {
-  const { RuleActionType, HeaderOperation, ResourceType } = chrome.declarativeNetRequest
-  await chrome.declarativeNetRequest.updateSessionRules({
-    removeRuleIds: [HIDDEN_FRAME_RULE_ID],
-    addRules: [
-      {
-        id: HIDDEN_FRAME_RULE_ID,
-        priority: 1,
-        action: {
-          type: RuleActionType.MODIFY_HEADERS,
-          responseHeaders: [
-            { header: 'x-frame-options', operation: HeaderOperation.REMOVE },
-            { header: 'content-security-policy', operation: HeaderOperation.REMOVE }
-          ]
-        },
-        condition: {
-          requestDomains: ['monday.com'],
-          resourceTypes: [ResourceType.SUB_FRAME],
-          initiatorDomains: [chrome.runtime.id, 'monday.com'],
-          tabIds: [chrome.tabs.TAB_ID_NONE]
-        }
-      }
-    ]
-  })
+async function fetchCsrfToken(host: string): Promise<{ token: string | null; source: string }> {
+  const res = await fetch(`https://${host}/`, { credentials: 'include', signal: AbortSignal.timeout(20_000) })
+  const html = await res.text()
+  const meta =
+    html.match(/<meta[^>]+name=["']csrf-token["'][^>]*content=["']([^"']+)["']/i) ??
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]*name=["']csrf-token["']/i)
+  if (meta) return { token: meta[1], source: 'meta tag' }
+  const inline = html.match(/csrf[_-]?token["']?\s*[:=]\s*["']([^"']{16,})["']/i)
+  if (inline) return { token: inline[1], source: 'inline script' }
+  return { token: null, source: `not found in ${html.length} bytes of HTML (status ${res.status})` }
 }
 
-async function ensureOffscreen(): Promise<void> {
-  if (offscreenIdleTimer !== null) {
-    clearTimeout(offscreenIdleTimer)
-    offscreenIdleTimer = null
-  }
-  offscreenReady ??= (async () => {
-    if (await chrome.offscreen.hasDocument()) return
-    await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
-      reasons: [chrome.offscreen.Reason.DOM_SCRAPING],
-      justification: 'Load monday task pages invisibly so captures never open a tab'
-    })
-  })().catch((err) => {
-    offscreenReady = null
-    throw err
-  })
-  return offscreenReady
+// ─── monday API reader ───────────────────────────────────────────────
+
+/** CSRF tokens per account host; one token lasts the whole monday session. */
+const csrfTokens = new Map<string, string>()
+
+async function csrfTokenFor(host: string, refresh: boolean): Promise<string> {
+  const cached = csrfTokens.get(host)
+  if (cached && !refresh) return cached
+  const { token } = await fetchCsrfToken(host)
+  // The app page only carries a token for a signed-in user
+  if (!token) throw new Error(`Not signed in to ${host} in this Chrome profile. Sign in to monday and try again.`)
+  csrfTokens.set(host, token)
+  return token
 }
 
-/** monday's app is heavy, so close the offscreen document once no capture has used it for a while. */
-function closeOffscreenWhenIdle() {
-  if (hiddenCaptures.size > 0) return
-  if (offscreenIdleTimer !== null) clearTimeout(offscreenIdleTimer)
-  offscreenIdleTimer = setTimeout(() => {
-    offscreenIdleTimer = null
-    if (hiddenCaptures.size > 0) return
-    offscreenReady = null
-    chrome.offscreen.closeDocument().catch(() => {})
-  }, OFFSCREEN_IDLE_MS)
-}
-
-async function sendToOffscreen(message: { type: string; captureId: string; url?: string }): Promise<void> {
-  // A just-created offscreen page may not be listening yet
+/** Calls monday's GraphQL endpoint the way its web app does: session cookie plus `x-csrf-token`. */
+async function mondayGraphql<T>(host: string, query: string, variables: Record<string, unknown>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
-    try {
-      await chrome.runtime.sendMessage({ target: 'offscreen', ...message })
-      return
-    } catch (err) {
-      if (attempt >= 10) throw err
-      await delay(100)
+    const res = await fetch(`https://${host}/v2`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': await csrfTokenFor(host, attempt > 0) },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(30_000)
+    })
+    // A rejected token usually means the session was renewed; fetch a fresh one once
+    if ((res.status === 401 || res.status === 403) && attempt === 0) continue
+    const body = (await res.json().catch(() => ({}))) as { data?: T; errors?: Array<{ message?: string }> }
+    if (!res.ok || body.errors?.length || !body.data) {
+      throw new Error(`monday API: ${body.errors?.[0]?.message ?? `HTTP ${res.status}`}`)
     }
+    return body.data
   }
 }
 
-/** Loads `url` in an invisible frame and resolves with what the content script read there. */
-async function extractHidden(url: string, timeoutMs: number): Promise<ExtractResult> {
-  await ensureOffscreen()
-  const captureId = crypto.randomUUID()
-  const result = new Promise<ExtractResult>((resolve) => hiddenCaptures.set(captureId, resolve))
-  try {
-    await sendToOffscreen({ type: 'open-frame', captureId, url })
-    return await Promise.race([
-      result,
-      delay(timeoutMs).then((): never => {
-        throw new Error('The hidden frame did not finish reading the task in time')
-      })
-    ])
-  } finally {
-    hiddenCaptures.delete(captureId)
-    sendToOffscreen({ type: 'close-frame', captureId }).catch(() => {})
-    closeOffscreenWhenIdle()
-  }
+async function readTaskViaApi(host: string, itemId: string): Promise<MappedTask> {
+  const data = await mondayGraphql<{ items: ApiItem[] }>(host, ITEM_QUERY, { ids: [itemId] })
+  const item = data.items?.[0]
+  if (!item) throw new Error(`monday has no task ${itemId} that this account can see`)
+  return mapItem(item)
 }
 
 /** The task open in the active tab of the current window, else the first open monday task tab. */
@@ -653,7 +515,7 @@ async function findTaskTabUrl(): Promise<string | undefined> {
   return mondayTabs.find((t) => t.url && isMondayTaskUrl(t.url))?.url
 }
 
-async function performCapture(requestId?: string, reason: 'mcp' | 'auto' | 'manual' = 'mcp', sourceUrl?: string) {
+async function performCapture(requestId?: string, sourceUrl?: string) {
   const captureDeadline = Date.now() + 150_000
   const config = await getConfig()
   if (!config.token) {
@@ -676,9 +538,8 @@ async function performCapture(requestId?: string, reason: 'mcp' | 'auto' | 'manu
   activeCaptures++
   try {
     await setConfig({ capturing: true })
-    // Read the task in an invisible frame: no tab opens and the user's own tabs are never touched
-    const extractRes = await extractHidden(targetUrl, 100_000)
-    if (extractRes.error) throw new Error(extractRes.error)
+    // Read the task through monday's API with the browser session: no tab, no page rendering
+    const extractRes: ExtractResult = await readTaskViaApi(parsed.accountHost, parsed.itemId)
 
     // Process results
     const { title, fields, updates, attachments: rawAttachments, warnings: contentWarnings } = extractRes
@@ -797,7 +658,7 @@ async function performCapture(requestId?: string, reason: 'mcp' | 'auto' | 'manu
       updates,
       attachments,
       capturedAt: new Date().toISOString(),
-      captureReason: reason,
+      captureReason: 'mcp',
       complete,
       warnings
     }

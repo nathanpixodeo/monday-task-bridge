@@ -7,6 +7,9 @@ import './style.css'
 
 const BRIDGE_HOST = '127.0.0.1:3457'
 const BRIDGE_COMMAND = 'npm run bridge'
+const AUTHOR = 'Nhat Nguyen'
+const DEVELOPER = 'Nexkit'
+const CONTACT_EMAIL = 'nathanpixodeo@gmail.com'
 // The bridge issues pairing codes with a two-minute TTL
 const PAIRING_SECONDS = 120
 const RING_RADIUS = 72
@@ -288,26 +291,6 @@ function ServerIcon() {
   )
 }
 
-function ScanIcon() {
-  return (
-    <Icon>
-      <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2" />
-      <path d="M8 12h8" />
-    </Icon>
-  )
-}
-
-function SyncIcon() {
-  return (
-    <Icon>
-      <path d="M3.5 12a8.5 8.5 0 0 1 14.85-5.65l2.15 2.15" />
-      <path d="M20.5 3.5v5h-5" />
-      <path d="M20.5 12a8.5 8.5 0 0 1-14.85 5.65L3.5 15.5" />
-      <path d="M3.5 20.5v-5h5" />
-    </Icon>
-  )
-}
-
 function RetryIcon() {
   return (
     <Icon>
@@ -334,7 +317,6 @@ function InfoIcon() {
     </Icon>
   )
 }
-
 function ImageIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
@@ -413,14 +395,8 @@ function Spinner({ className = 'size-4' }: { className?: string }) {
 // ─── Primitives ──────────────────────────────────────────────────────
 
 function BrandMark() {
-  return (
-    <span
-      aria-hidden="true"
-      className="grid size-[26px] shrink-0 place-items-center rounded-[8px] bg-linear-to-br from-violet-500 to-indigo-600 shadow-md shadow-indigo-500/30 ring-1 ring-white/15 ring-inset"
-    >
-      <PowerGlyph className="size-3.5 text-white" strokeWidth={2.8} />
-    </span>
-  )
+  // The extension's own toolbar icon, so the popup and the toolbar match
+  return <img src="icons/icon-48.png" alt="" aria-hidden="true" className="size-[26px] shrink-0 object-contain" />
 }
 
 function IconButton({
@@ -524,35 +500,6 @@ function CommandChip({ command }: { command: string }) {
       <code className="min-w-0 flex-1 truncate font-mono text-[13px] text-slate-200 select-all">{command}</code>
       <CopyButton text={command} label="Copy command" />
     </div>
-  )
-}
-
-function Switch({
-  checked,
-  onChange,
-  labelledBy,
-  describedBy
-}: {
-  checked: boolean
-  onChange: (next: boolean) => void
-  labelledBy: string
-  describedBy: string
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-labelledby={labelledBy}
-      aria-describedby={describedBy}
-      onClick={() => onChange(!checked)}
-      className={`inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full p-0.5 transition-colors duration-200 ${checked ? 'bg-emerald-500' : 'bg-white/[0.12]'} ${FOCUS_RING}`}
-    >
-      <span
-        aria-hidden="true"
-        className={`size-5 rounded-full bg-white shadow-sm shadow-black/30 transition-transform duration-200 ${checked ? 'translate-x-4' : 'translate-x-0'}`}
-      />
-    </button>
   )
 }
 
@@ -964,30 +911,6 @@ function PairingCard({ code, expiresAt }: { code: string; expiresAt: string | nu
   )
 }
 
-function AutoSyncRow({ enabled }: { enabled: boolean }) {
-  return (
-    <div className="flex items-center gap-3 px-4 py-3">
-      <IconTile>
-        <SyncIcon />
-      </IconTile>
-      <div className="min-w-0 flex-1">
-        <p id="auto-sync-label" className="text-sm leading-5 font-medium text-slate-100">
-          Auto-sync
-        </p>
-        <p id="auto-sync-help" className="text-xs leading-4 text-slate-400">
-          Capture each task you open
-        </p>
-      </div>
-      <Switch
-        checked={enabled}
-        onChange={(next) => void send({ type: 'set-auto-sync', enabled: next })}
-        labelledBy="auto-sync-label"
-        describedBy="auto-sync-help"
-      />
-    </div>
-  )
-}
-
 function LastCaptureRow({ config }: { config: Config }) {
   const [open, setOpen] = useState(false)
 
@@ -1145,6 +1068,25 @@ function SettingsView({
           <p className="min-w-0 flex-1 text-sm leading-5 font-medium text-slate-100">Version</p>
           <p className="font-mono text-xs text-slate-400">v{chrome.runtime.getManifest().version}</p>
         </div>
+        <div className="flex items-center gap-3 px-4 py-3">
+          <IconTile>
+            <img src="icons/nexkit.png" alt="Nexkit" className="size-5 object-contain" />
+          </IconTile>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm leading-5 font-medium text-slate-100">{AUTHOR}</p>
+            <p className="text-xs leading-4 text-slate-400">
+              Developed by {DEVELOPER} ·{' '}
+              <a
+                href={`mailto:${CONTACT_EMAIL}`}
+                target="_blank"
+                rel="noreferrer"
+                className={`rounded text-slate-300 underline decoration-white/20 underline-offset-2 hover:text-white ${FOCUS_RING}`}
+              >
+                {CONTACT_EMAIL}
+              </a>
+            </p>
+          </div>
+        </div>
       </section>
 
       <section aria-labelledby="unpair-title" className={`${CARD} border-rose-500/20 bg-rose-500/[0.05] p-4`}>
@@ -1193,7 +1135,6 @@ function Popup() {
   const [localError, setLocalError] = useState<string | null>(null)
   const [unpairNotice, setUnpairNotice] = useState<UnpairNotice | null>(null)
   const [unpairing, setUnpairing] = useState(false)
-  const [capturing, setCapturing] = useState(false)
   const [permissionError, setPermissionError] = useState<string | null>(null)
   const [permissionsGranted, setPermissionsGranted] = useState(false)
 
@@ -1204,7 +1145,6 @@ function Popup() {
 
   const mode = displayMode ?? getMode(config)
   const error = config.error ?? localError
-  const captureBusy = capturing || config.capturing
   const showBridgeHint = mode === 'unpaired' && bridgeHint && health === 'down'
 
   const startPairing = async () => {
@@ -1229,15 +1169,6 @@ function Popup() {
     setPowerBusy(true)
     await send({ type: 'set-enabled', enabled: mode === 'off' })
     setPowerBusy(false)
-  }
-
-  const capture = async () => {
-    setLocalError(null)
-    setPermissionsGranted(false)
-    setCapturing(true)
-    const response = await send<{ ok?: boolean; error?: string }>({ type: 'capture-now' })
-    setCapturing(false)
-    if (response?.error) setLocalError(response.error)
   }
 
   const allowAccess = async () => {
@@ -1307,24 +1238,8 @@ function Popup() {
               <PermissionsCard origins={config.pendingOrigins} error={permissionError} onAllow={allowAccess} />
             )}
             {config.paired && permissionsGranted && (
-              <Toast
-                tone="success"
-                icon={<CheckCircleIcon />}
-                onDismiss={() => setPermissionsGranted(false)}
-                action={
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={mode !== 'connected'}
-                    busy={captureBusy}
-                    onClick={capture}
-                  >
-                    {captureBusy ? <Spinner className="size-3" /> : <ScanIcon />}
-                    Capture again
-                  </Button>
-                }
-              >
-                Access granted. Capture again to fetch images.
+              <Toast tone="success" icon={<CheckCircleIcon />} onDismiss={() => setPermissionsGranted(false)}>
+                Access granted. The next read fetches those images.
               </Toast>
             )}
 
@@ -1333,29 +1248,6 @@ function Popup() {
               <PairingCard code={config.pairCode} expiresAt={config.expiresAt} />
             )}
 
-            {/* Connecting keeps the capture button in place so the layout holds when the link comes up */}
-            {(mode === 'connected' || mode === 'connecting') && (
-              <Button
-                variant={mode === 'connected' ? 'primary' : 'secondary'}
-                size="lg"
-                block
-                disabled={mode === 'connecting'}
-                busy={captureBusy}
-                onClick={capture}
-              >
-                {captureBusy ? (
-                  <>
-                    <Spinner />
-                    Capturing…
-                  </>
-                ) : (
-                  <>
-                    <ScanIcon />
-                    Capture this task
-                  </>
-                )}
-              </Button>
-            )}
             {mode === 'offline' && (
               <>
                 <CommandChip command={BRIDGE_COMMAND} />
@@ -1367,11 +1259,7 @@ function Popup() {
             )}
 
             {config.paired && (
-              <section
-                aria-label="Capture"
-                className={`${CARD} ${SURFACE} divide-y divide-white/[0.06]`}
-              >
-                <AutoSyncRow enabled={config.autoSync} />
+              <section aria-label="Last read" className={`${CARD} ${SURFACE}`}>
                 <LastCaptureRow config={config} />
               </section>
             )}

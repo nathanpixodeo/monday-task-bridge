@@ -159,7 +159,7 @@ mcp.tool(
 mcp.tool(
   'monday_read_task',
   'Capture any Monday.com task by URL or board+item ID without the user opening it. ' +
-    'The extension loads the task in a background tab of the signed-in Chrome profile, reads it, and closes the tab. ' +
+    'The extension reads it through the monday web API with the signed-in Chrome session; no tab opens. ' +
     'Requires Chrome running with the extension connected (power on). Waits up to 180s.',
   {
     url: z.string().optional().describe('Full monday task URL, e.g. https://team.monday.com/boards/123/pulses/456'),

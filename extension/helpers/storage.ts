@@ -7,11 +7,10 @@ export interface Config {
   expiresAt: string | null
   status: 'disconnected' | 'connecting' | 'connected' | 'authenticated' | 'error' | 'pairing'
   error: string | null
-  /** Power switch: when false the worker stays disconnected and skips auto-sync. */
+  /** Power switch: when false the worker stays disconnected, so agents cannot read tasks. */
   enabled: boolean
   /** When the current live connection was authenticated; null while not connected. */
   connectedAt: string | null
-  autoSync: boolean
   capturing: boolean
   pendingOrigins: string[]
   lastCaptureAt: string | null
@@ -31,7 +30,6 @@ export const defaultConfig: Config = {
   error: null,
   enabled: true,
   connectedAt: null,
-  autoSync: true,
   capturing: false,
   pendingOrigins: [],
   lastCaptureAt: null,

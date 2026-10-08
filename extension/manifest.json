@@ -1,8 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Monday Task Bridge",
-  "version": "0.3.0",
-  "description": "Read visible monday.com tasks and original images through a paired local MCP bridge.",
+  "version": "0.4.2",
+  "description": "Read monday.com tasks and original images with your signed-in session, for a paired local MCP bridge.",
+  "author": {
+    "email": "nathanpixodeo@gmail.com"
+  },
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -12,12 +15,11 @@
   "permissions": [
     "storage",
     "alarms",
-    "tabs",
-    "offscreen",
-    "declarativeNetRequestWithHostAccess"
+    "tabs"
   ],
   "host_permissions": [
     "https://*.monday.com/*",
+    "https://files-monday-com.s3.amazonaws.com/*",
     "http://127.0.0.1:3457/*"
   ],
   "optional_host_permissions": [
@@ -26,13 +28,6 @@
   "background": {
     "service_worker": "worker.js"
   },
-  "content_scripts": [
-    {
-      "matches": ["https://*.monday.com/*"],
-      "js": ["content.js"],
-      "all_frames": true
-    }
-  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
