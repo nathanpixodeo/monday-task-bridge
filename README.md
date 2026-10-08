@@ -65,14 +65,22 @@ In a macOS/Linux shell, use `curl http://127.0.0.1:3457/health`.
 
 ## Connect an MCP client
 
-The bridge and the MCP server are **separate processes**. The MCP client starts the stdio server, and the MCP server starts the bridge in the background whenever it is not running (its log goes to `bridge.log` in the data directory), so you do not need to keep `npm run bridge` open once paired. From the repository root, add it to Codex with:
+The bridge and the MCP server are **separate processes**. The MCP client starts the stdio server, and the MCP server starts the bridge in the background whenever it is not running (its log goes to `bridge.log` in the data directory), so you do not need to keep `npm run bridge` open once paired. From the repository root, register it with your agent CLI:
 
 ```powershell
 $bridgeMcp = (Resolve-Path .\dist\bridge\mcp.js).Path
+
+# Claude Code (user scope: available in every project)
+claude mcp add -s user monday-task-bridge -- node $bridgeMcp
+
+# Codex
 codex mcp add monday-task-bridge -- node $bridgeMcp
+
+# Antigravity CLI (agy)
+agy mcp add monday-task-bridge node $bridgeMcp
 ```
 
-For another stdio MCP client, set `command` to `node` and `args` to the absolute path of `dist/bridge/mcp.js`. The MCP process reads the local admin token from the same data directory as the bridge; no token belongs in client configuration. `npm run mcp` is available for development from this checkout.
+Check with `claude mcp list`, `codex mcp list`, or `agy mcp list`. For another stdio MCP client, set `command` to `node` and `args` to the absolute path of `dist/bridge/mcp.js`. The MCP process reads the local admin token from the same data directory as the bridge; no token belongs in client configuration. `npm run mcp` is available for development from this checkout.
 
 | MCP tool | Result |
 | --- | --- |
