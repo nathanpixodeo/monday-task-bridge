@@ -12,8 +12,9 @@ A local Chrome extension and MCP server that let an AI agent read monday.com tas
 2. The extension calls **monday's own web API** (`https://<account>.monday.com/v2`, GraphQL), the same endpoint monday's web app uses, with your browser session and the app's CSRF token. One request returns the task name, every column as readable text, updates with replies and authors, and the attached files. No tab opens and no page is rendered.
 3. Original images are downloaded from monday's file storage and checked byte by byte. Files that are not images are listed in an `Other files` field.
 4. The snapshot goes to a bridge bound to `127.0.0.1:3457`. A separate MCP process exposes cached snapshots and requests fresh reads.
+5. An agent can also list the tasks assigned to you: the extension asks monday for the items on your active boards whose people columns contain you, and the list is relayed to the agent without being cached.
 
-The extension only reads: it never edits tasks, crawls boards, reads or exports cookie values, or substitutes screenshots for original images. It can only access tasks your monday account can see.
+The extension only reads: it never edits tasks, crawls boards (listing assigned tasks asks monday for your items only), reads or exports cookie values, or substitutes screenshots for original images. It can only access tasks your monday account can see.
 
 ## Requirements
 
@@ -87,6 +88,7 @@ Check with `claude mcp list`, `codex mcp list`, or `agy mcp list`. For another s
 | `monday_bridge_status` | Bridge health, pairing, and extension connection state. |
 | `monday_read_task` | Fresh snapshot of any task by `url`, or by `boardId` + `itemId` (optional `accountHost`, defaulting to the host of the latest cached task). You do not need to open the task. |
 | `monday_read_open_task` | Fresh snapshot of the task open in the active tab, or the first open task tab if another tab is active. |
+| `monday_list_assigned_tasks` | Live list of tasks assigned to you (any people column), with board, link and column texts (optional `accountHost`, defaulting to the host of an open monday tab, then of the latest cached task). Checks up to 100 active boards and 1000 tasks within 120 seconds; `complete` is false and `warnings` explain when a cap or an unreadable board cut the list. Not cached. |
 | `monday_get_task` | Latest cached snapshot, optionally filtered by `boardId` and/or `itemId`. |
 | `monday_get_image` | Original PNG, JPEG, GIF, or WebP bytes for a ready attachment ID. |
 | `monday_list_tasks` | Summaries of locally cached snapshots. |
@@ -116,7 +118,7 @@ Snapshots, image bytes, and tokens are stored **unencrypted** under the current 
 - **"monday API: …":** monday rejected the request; the message is monday's. A task you cannot see in monday returns "monday has no task … that this account can see".
 - **`CAPTURE_TIMEOUT`:** A read did not finish within 180 seconds. Check the popup error and retry.
 - **`NO_SNAPSHOT`:** No cached task matches the requested IDs, or the MCP process could not obtain a read. Check `monday_bridge_status` first.
-- **`INVALID_TARGET`:** The URL is not a `https://<account>.monday.com/boards/<id>/pulses/<id>` task link, or no account host is known for a board and item ID.
+- **`INVALID_TARGET`:** The URL is not a `https://<account>.monday.com/boards/<id>/pulses/<id>` task link, or no account host is known for a board and item ID or for `monday_list_assigned_tasks` (pass `accountHost` or open monday in Chrome).
 - **No task tab found:** Call `monday_read_task` with the task URL instead of `monday_read_open_task`.
 - **Image unavailable:** Only PNG, JPEG, GIF, and WebP originals are accepted after byte-level validation; other files are listed in the `Other files` field. Images over **25 MB each** or **75 MB per read** are not returned. If an image is stored outside monday's usual file storage, the popup asks to allow that host once; grant it only if you recognize the host.
 - **More than 100 updates:** Only the latest 100 are read, and the snapshot says so in `warnings`.

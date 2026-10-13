@@ -11,14 +11,23 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { Store } from './store.js'
 import { PairingManager, safeCompare } from './pairing.js'
 import {
+  AssignedTasksPayloadSchema,
   CapturePayloadSchema,
+  ListAssignedTasksBodySchema,
+  MAX_ASSIGNED_TASKS_BYTES,
   PairRequestBodySchema,
   PairApproveBodySchema,
   ReadTaskBodySchema,
+  isMondayHost,
   resolveTaskUrl,
   validateCaptureSize,
 } from './validate.js'
-import type { CapturePayload, ExtensionToBridgeMessage, BridgeToExtensionMessage } from '../shared/types.js'
+import type {
+  AssignedTasks,
+  CapturePayload,
+  ExtensionToBridgeMessage,
+  BridgeToExtensionMessage,
+} from '../shared/types.js'
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -46,20 +55,30 @@ interface LiveSocket {
   token: string
   authenticated: boolean
   origin?: string
+  capabilities?: string[]
 }
 
 /** Map of active extension WebSocket connections keyed by connection ID. */
 const liveSockets = new Map<string, LiveSocket>()
 
-interface PendingCapture {
+interface PendingRequest<T> {
   requestId: string
   targetConnId: string
-  resolve: (payload: CapturePayload) => void
+  resolve: (value: T) => void
   reject: (err: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
 
-const pendingCaptures = new Map<string, PendingCapture>()
+const pendingCaptures = new Map<string, PendingRequest<CapturePayload>>()
+const pendingAssignedTasks = new Map<string, PendingRequest<AssignedTasks>>()
+
+/** The extension could not tell which monday account to read; reported to MCP as INVALID_TARGET. */
+export class InvalidTargetError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InvalidTargetError'
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -146,16 +165,21 @@ function wsSend(ws: WebSocket, msg: BridgeToExtensionMessage): void {
   ws.send(JSON.stringify(msg))
 }
 
-function cleanupSocket(connId: string): void {
-  liveSockets.delete(connId)
-  // Clean up any pending captures routed through this socket
-  for (const [reqId, pending] of pendingCaptures.entries()) {
-    if (pending.targetConnId === connId) {
-      clearTimeout(pending.timer)
-      pendingCaptures.delete(reqId)
-      pending.reject(new Error('BROWSER_OFFLINE'))
+/** Reject the pending requests routed through `connId`, or all of them when it is omitted. */
+function rejectPending<T>(pending: Map<string, PendingRequest<T>>, connId?: string): void {
+  for (const [reqId, request] of pending.entries()) {
+    if (connId === undefined || request.targetConnId === connId) {
+      clearTimeout(request.timer)
+      pending.delete(reqId)
+      request.reject(new Error('BROWSER_OFFLINE'))
     }
   }
+}
+
+function cleanupSocket(connId: string): void {
+  liveSockets.delete(connId)
+  rejectPending(pendingCaptures, connId)
+  rejectPending(pendingAssignedTasks, connId)
 }
 
 /** Close every authenticated extension socket, e.g. after its token is revoked. */
@@ -201,10 +225,13 @@ async function authenticateExtension(
 // ---------------------------------------------------------------------------
 
 /**
- * Request a capture from the connected extension.
- * Returns a promise that resolves when the extension posts the snapshot.
+ * Send a request to the connected extension and register it under a fresh request ID.
+ * The promise settles when the extension answers, the socket closes, or the timeout fires.
  */
-export function requestCapture(url?: string): Promise<CapturePayload> {
+function requestFromExtension<T>(
+  pending: Map<string, PendingRequest<T>>,
+  message: (requestId: string) => BridgeToExtensionMessage
+): Promise<T> {
   // Find an authenticated socket
   let targetConnId: string | undefined
   let target: LiveSocket | undefined
@@ -221,53 +248,97 @@ export function requestCapture(url?: string): Promise<CapturePayload> {
 
   const requestId = randomBytes(8).toString('hex')
 
-  return new Promise<CapturePayload>((resolve, reject) => {
+  return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      pendingCaptures.delete(requestId)
+      pending.delete(requestId)
       reject(new Error('CAPTURE_TIMEOUT'))
     }, CAPTURE_TIMEOUT_MS)
 
-    pendingCaptures.set(requestId, {
+    pending.set(requestId, {
       requestId,
       targetConnId: targetConnId!,
       resolve,
       reject,
       timer,
     })
-    wsSend(target!.ws, url ? { type: 'capture', requestId, url } : { type: 'capture', requestId })
+    wsSend(target!.ws, message(requestId))
   })
+}
+
+/** Take a pending request out of its map and stop its timer. */
+function settle<T>(pending: Map<string, PendingRequest<T>>, requestId: string): PendingRequest<T> | undefined {
+  const request = pending.get(requestId)
+  if (!request) return undefined
+  clearTimeout(request.timer)
+  pending.delete(requestId)
+  return request
+}
+
+/**
+ * Request a capture from the connected extension.
+ * Returns a promise that resolves when the extension posts the snapshot.
+ */
+export function requestCapture(url?: string): Promise<CapturePayload> {
+  return requestFromExtension(pendingCaptures, (requestId) =>
+    url ? { type: 'capture', requestId, url } : { type: 'capture', requestId })
 }
 
 /**
  * Resolve a pending capture with the provided payload.
  */
 export function resolveCapture(requestId: string, payload: CapturePayload): boolean {
-  const pending = pendingCaptures.get(requestId)
-  if (!pending) return false
-  clearTimeout(pending.timer)
-  pendingCaptures.delete(requestId)
-  pending.resolve(payload)
-  return true
+  const pending = settle(pendingCaptures, requestId)
+  pending?.resolve(payload)
+  return pending !== undefined
 }
 
 /**
  * Reject a pending capture with an error.
  */
 export function rejectCapture(requestId: string, errorMsg: string): boolean {
-  const pending = pendingCaptures.get(requestId)
-  if (!pending) return false
-  clearTimeout(pending.timer)
-  pendingCaptures.delete(requestId)
-  pending.reject(new Error(errorMsg))
-  return true
+  const pending = settle(pendingCaptures, requestId)
+  pending?.reject(new Error(errorMsg))
+  return pending !== undefined
+}
+
+export function requestAssignedTasks(accountHost?: string, cachedHost?: string): Promise<AssignedTasks> {
+  let target: LiveSocket | undefined
+  for (const ls of Array.from(liveSockets.values()).reverse()) {
+    if (ls.authenticated && ls.ws.readyState === WebSocket.OPEN) {
+      target = ls
+      break
+    }
+  }
+  if (target && !target.capabilities?.includes('assignedTasks')) {
+    return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to enable assigned tasks'))
+  }
+
+  // JSON.stringify drops the host keys left undefined
+  return requestFromExtension(pendingAssignedTasks, (requestId) =>
+    ({ type: 'list-assigned-tasks', requestId, accountHost, cachedHost }))
+}
+
+export function resolveAssignedTasks(requestId: string, result: AssignedTasks): boolean {
+  const pending = settle(pendingAssignedTasks, requestId)
+  pending?.resolve(result)
+  return pending !== undefined
+}
+
+export function rejectAssignedTasks(requestId: string, err: Error, targetConnId?: string): boolean {
+  if (targetConnId !== undefined) {
+    const existing = pendingAssignedTasks.get(requestId)
+    if (!existing || existing.targetConnId !== targetConnId) {
+      return false
+    }
+  }
+  const pending = settle(pendingAssignedTasks, requestId)
+  pending?.reject(err)
+  return pending !== undefined
 }
 
 export function resetCaptures(): void {
-  for (const pending of pendingCaptures.values()) {
-    clearTimeout(pending.timer)
-    pending.reject(new Error('BROWSER_OFFLINE'))
-  }
-  pendingCaptures.clear()
+  rejectPending(pendingCaptures)
+  rejectPending(pendingAssignedTasks)
 }
 
 // ---------------------------------------------------------------------------
@@ -277,9 +348,13 @@ export function resetCaptures(): void {
 async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const bridgeToken = await store.getBridgeToken()
   let extensionConnected = false
+  let assignedTasksSupported = false
   for (const ls of liveSockets.values()) {
     if (ls.authenticated && ls.ws.readyState === WebSocket.OPEN) {
       extensionConnected = true
+      if (ls.capabilities?.includes('assignedTasks')) {
+        assignedTasksSupported = true
+      }
       break
     }
   }
@@ -287,6 +362,7 @@ async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse
     status: 'ok',
     paired: bridgeToken !== null,
     extensionConnected,
+    assignedTasksSupported,
     uptime: process.uptime(),
   })
 }
@@ -529,6 +605,78 @@ async function captureAndRespond(res: http.ServerResponse, url?: string): Promis
   }
 }
 
+async function handleListAssignedTasks(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const adminToken = req.headers['x-bridge-admin-token'] as string | undefined
+  const expectedAdmin = await store.getAdminToken()
+  if (!adminToken || !safeCompare(adminToken, expectedAdmin)) {
+    json(res, 403, { error: 'Invalid admin token' })
+    return
+  }
+
+  const body = await readBody(req, 4096)
+  let parsedJson: unknown
+  try {
+    parsedJson = JSON.parse(body)
+  } catch {
+    json(res, 400, { error: 'Invalid JSON' })
+    return
+  }
+  const parsed = ListAssignedTasksBodySchema.safeParse(parsedJson)
+  if (!parsed.success) {
+    json(res, 400, { error: 'Invalid body', details: parsed.error.issues })
+    return
+  }
+
+  // The extension prefers an open monday tab and only falls back to this host
+  const latestHost = (await store.getLatestSnapshot())?.snapshot.accountHost
+  const cachedHost = latestHost && isMondayHost(latestHost) ? latestHost : undefined
+
+  try {
+    json(res, 200, await requestAssignedTasks(parsed.data.accountHost, cachedHost))
+  } catch (err: unknown) {
+    if (err instanceof InvalidTargetError) {
+      json(res, 400, { error: err.message })
+      return
+    }
+    const msg = err instanceof Error ? err.message : 'Unknown error'
+    json(res, 502, { error: msg })
+  }
+}
+
+async function handleAssignedTasks(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  origin: string
+): Promise<void> {
+  if (!(await authenticateExtension(req, res, origin))) return
+
+  const rawBody = await readBody(req, MAX_ASSIGNED_TASKS_BYTES)
+  let bodyObj: unknown
+  try {
+    bodyObj = JSON.parse(rawBody)
+  } catch {
+    json(res, 400, { error: 'Invalid JSON' })
+    return
+  }
+
+  const parsed = AssignedTasksPayloadSchema.safeParse(bodyObj)
+  if (!parsed.success) {
+    if (bodyObj && typeof bodyObj === 'object' && 'requestId' in bodyObj &&
+        typeof bodyObj.requestId === 'string') {
+      rejectAssignedTasks(bodyObj.requestId, new Error('Invalid assigned tasks payload'))
+    }
+    json(res, 400, { error: 'Invalid payload', details: parsed.error.issues })
+    return
+  }
+
+  // Relayed to the waiting MCP call only; the list is not written to the snapshot store
+  if (!resolveAssignedTasks(parsed.data.requestId, parsed.data.result)) {
+    json(res, 404, { error: 'No pending assigned tasks request' })
+    return
+  }
+  json(res, 200, { received: true })
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -644,6 +792,22 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       return
     }
 
+    // POST /v1/list-assigned-tasks – MCP admin route (allowed without Origin)
+    if (method === 'POST' && pathname === '/v1/list-assigned-tasks') {
+      await handleListAssignedTasks(req, res)
+      return
+    }
+
+    // POST /v1/assigned-tasks – extension route: answer to a list-assigned-tasks request
+    if (method === 'POST' && pathname === '/v1/assigned-tasks') {
+      if (!origin || !isExtensionOrigin(origin)) {
+        json(res, 403, { error: 'Forbidden: requires chrome-extension Origin' })
+        return
+      }
+      await handleAssignedTasks(req, res, origin)
+      return
+    }
+
     json(res, 404, { error: 'Not found' })
   } catch (err: unknown) {
     if (err instanceof PayloadTooLargeError) {
@@ -755,6 +919,9 @@ function setupWebSocket(server: http.Server): void {
 
         liveSocket.token = msg.token
         liveSocket.authenticated = true
+        liveSocket.capabilities = Array.isArray(msg.capabilities) && msg.capabilities.every(c => typeof c === 'string')
+          ? msg.capabilities
+          : undefined
         for (const [oldId, old] of liveSockets) {
           if (old.ws !== ws && old.authenticated) {
             old.ws.close(1000, 'Replaced by new connection')
@@ -783,6 +950,19 @@ function setupWebSocket(server: http.Server): void {
         if (msg.error) {
           rejectCapture(msg.requestId, msg.error)
         }
+        return
+      }
+
+      if (msg.type === 'assigned-tasks-error') {
+        if (!liveSocket.authenticated) {
+          ws.close(4003, 'Not authenticated')
+          return
+        }
+        rejectAssignedTasks(
+          msg.requestId,
+          msg.code === 'INVALID_TARGET' ? new InvalidTargetError(msg.error) : new Error(msg.error),
+          connId
+        )
         return
       }
       } catch {
