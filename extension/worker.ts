@@ -2,11 +2,13 @@ import { getConfig, setConfig, defaultConfig, unpairedFields } from './helpers/s
 import type { Config } from './helpers/storage'
 import { ITEM_QUERY, mapItem } from './helpers/monday-api'
 import type { ApiItem, MappedTask } from './helpers/monday-api'
+import { readAssignedTasks } from './helpers/assigned-tasks'
 import type {
   TaskSnapshot,
   TaskAttachment,
   ImageUpload,
   CapturePayload,
+  AssignedTasksPayload,
   ExtensionToBridgeMessage,
   BridgeToExtensionMessage
 } from '../shared/types'
@@ -67,7 +69,7 @@ async function connectWs() {
       // Do NOT set connected yet — wait for hello-ack
       getConfig().then((c) => {
         if (c.token && ws === socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'hello', token: c.token } satisfies ExtensionToBridgeMessage))
+          socket.send(JSON.stringify({ type: 'hello', token: c.token, capabilities: ['assignedTasks'] } satisfies ExtensionToBridgeMessage))
         }
       })
     }
@@ -90,6 +92,11 @@ async function connectWs() {
           }
           performCapture(msg.requestId, msg.url).catch(async (err) => {
             reportCaptureError(msg.requestId, String(err))
+          })
+        } else if (msg.type === 'list-assigned-tasks') {
+          if (!authenticated) return
+          listAssignedTasks(msg.requestId, msg.accountHost, msg.cachedHost).catch((err) => {
+            reportAssignedTasksError(msg.requestId, err instanceof Error ? err.message : String(err))
           })
         }
       } catch (e) {
@@ -162,6 +169,11 @@ function reportCaptureError(requestId: string, error: string) {
   sendWs({ type: 'capture-result', requestId, error })
   // Also surface to popup
   setConfig({ error: `Capture failed: ${error}` })
+}
+
+function reportAssignedTasksError(requestId: string, error: string, code?: 'INVALID_TARGET') {
+  sendWs({ type: 'assigned-tasks-error', requestId, error, code })
+  setConfig({ error: `Listing assigned tasks failed: ${error}` })
 }
 
 // ─── Toolbar badge ───────────────────────────────────────────────────
@@ -698,6 +710,71 @@ async function performCapture(requestId?: string, sourceUrl?: string) {
       reportCaptureError(requestId, errMsg)
     }
     await setConfig({ error: `Capture failed: ${errMsg}` })
+  } finally {
+    activeCaptures--
+    await setConfig({ capturing: activeCaptures > 0 })
+  }
+}
+
+// ─── Assigned tasks ──────────────────────────────────────────────────
+
+// monday's marketing site and login page share the domain but are not accounts
+const NON_ACCOUNT_HOSTS = new Set(['www.monday.com', 'auth.monday.com'])
+
+function accountHostOf(url: string): string | null {
+  try {
+    const u = new URL(url)
+    const host = u.hostname.toLowerCase()
+    if (u.protocol !== 'https:' || !/^[a-z0-9-]+\.monday\.com$/.test(host) || NON_ACCOUNT_HOSTS.has(host)) return null
+    return host
+  } catch {
+    return null
+  }
+}
+
+/** The monday account open in the active tab of the current window, else in any open monday tab. */
+async function findAccountHost(): Promise<string | undefined> {
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true })
+  const mondayTabs = await chrome.tabs.query({ url: 'https://*.monday.com/*' })
+  for (const tab of [active, ...mondayTabs]) {
+    const host = tab?.url ? accountHostOf(tab.url) : null
+    if (host) return host
+  }
+  return undefined
+}
+
+/** Lists the user's assigned tasks and posts them to the bridge, which relays them without storing. */
+async function listAssignedTasks(requestId: string, accountHost?: string, cachedHost?: string) {
+  const config = await getConfig()
+  if (!config.token) {
+    reportAssignedTasksError(requestId, 'Not authenticated')
+    return
+  }
+
+  const host = accountHost ?? (await findAccountHost()) ?? cachedHost
+  if (!host) {
+    reportAssignedTasksError(
+      requestId,
+      'No monday account to read: pass accountHost (e.g. team.monday.com), or open monday.com in this Chrome profile',
+      'INVALID_TARGET'
+    )
+    return
+  }
+
+  activeCaptures++
+  try {
+    await setConfig({ capturing: true })
+    const result = await readAssignedTasks(host, mondayGraphql)
+    const res = await fetch('http://127.0.0.1:3457/v1/assigned-tasks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.token}`
+      },
+      body: JSON.stringify({ requestId, result } satisfies AssignedTasksPayload)
+    })
+    if (!res.ok) throw new Error(`Bridge returned ${res.status}`)
+    await setConfig({ error: null })
   } finally {
     activeCaptures--
     await setConfig({ capturing: activeCaptures > 0 })

@@ -219,6 +219,40 @@ export const ReadTaskBodySchema = z.object({
 const MONDAY_HOST_RE = /^[a-z0-9-]+\.monday\.com$/i
 const TASK_PATH_RE = /\/boards\/\d+(?:\/views\/\d+)?\/pulses\/\d+/
 
+export function isMondayHost(host: string): boolean {
+  return MONDAY_HOST_RE.test(host)
+}
+
+export const ListAssignedTasksBodySchema = z.object({
+  accountHost: z.string().regex(MONDAY_HOST_RE).optional(),
+})
+
+export const AssignedTaskSchema = z.object({
+  accountHost: z.string().max(256),
+  boardId: z.string().max(128),
+  boardName: z.string().max(1000),
+  itemId: z.string().max(128),
+  title: z.string().max(1000),
+  sourceUrl: z.string().max(2048),
+  fields: z.record(z.string().max(256), z.string().max(10_000)),
+})
+
+export const AssignedTasksPayloadSchema = z.object({
+  requestId: z.string().min(1).max(256).refine(isValidId, { message: 'Invalid request ID format' }),
+  result: z.object({
+    accountHost: z.string().max(256),
+    user: z.object({ id: z.string().max(128), name: z.string().max(256) }),
+    // The extension stops at 1000 tasks
+    tasks: z.array(AssignedTaskSchema).max(1000),
+    warnings: z.array(z.string().max(4000)).max(500),
+    complete: z.boolean(),
+    checkedAt: z.string().max(128),
+  }),
+})
+
+/** 1000 tasks with their column texts stay well under this. */
+export const MAX_ASSIGNED_TASKS_BYTES = 25 * 1024 * 1024
+
 /**
  * Turn a read-task request into a canonical https monday.com task URL so the
  * extension never opens a tab on an arbitrary host.

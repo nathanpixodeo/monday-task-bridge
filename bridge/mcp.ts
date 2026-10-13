@@ -4,6 +4,7 @@
  * Tools:
  *   monday_read_open_task   – request live capture from extension
  *   monday_read_task        – capture any task by URL or board+item ID
+ *   monday_list_assigned_tasks – list tasks assigned to the signed-in user (live, not stored)
  *   monday_get_task         – retrieve stored snapshot (optional boardId/itemId)
  *   monday_get_image        – return original image bytes as ImageContent
  *   monday_list_tasks       – list stored snapshots
@@ -97,7 +98,8 @@ const mcp = new McpServer({
   version: '0.3.0',
 })
 
-async function captureVia(path: string, body?: unknown) {
+/** POST a live-read request to the bridge, which relays it to the connected extension. */
+async function captureVia(path: string, body?: unknown, failureMessage = 'Failed to capture task') {
   try {
     await bridgeReady()
     const adminToken = await getAdminToken()
@@ -126,7 +128,7 @@ async function captureVia(path: string, body?: unknown) {
         }
       }
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: errCode, message: 'Failed to capture task' }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: errCode, message: failureMessage }) }],
         isError: true,
       }
     }
@@ -169,6 +171,21 @@ mcp.tool(
   },
   async ({ url, boardId, itemId, accountHost }) =>
     captureVia('/v1/read-task', { url, boardId, itemId, accountHost })
+)
+
+// -- monday_list_assigned_tasks ---------------------------------------------
+
+mcp.tool(
+  'monday_list_assigned_tasks',
+  'List the tasks assigned to the signed-in monday user: items on active boards where any people column contains them. ' +
+    'Read through the monday web API with the signed-in Chrome session; nothing is cached. ' +
+    'Check `complete` and `warnings`: caps (100 boards, 1000 tasks, 120s) and unreadable boards make the list partial. ' +
+    'Requires Chrome running with the extension connected (power on). Waits up to 180s.',
+  {
+    accountHost: z.string().optional().describe('e.g. team.monday.com; defaults to the host of an open monday tab, then of the latest cached task'),
+  },
+  async ({ accountHost }) =>
+    captureVia('/v1/list-assigned-tasks', { accountHost }, 'Failed to list assigned tasks')
 )
 
 // -- monday_get_task --------------------------------------------------------
