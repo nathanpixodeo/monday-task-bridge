@@ -352,7 +352,9 @@ test('falls back to the plain item query for good once monday refuses the board-
   assert.ok(result.tasks.every((task) => !('columns' in task) && !('group' in task)))
   assert.equal(result.complete, true)
   assert.deepEqual(result.warnings, [])
-  assert.equal(calls.filter((call) => call.query.includes('label_style')).length, 1)
+  // Once with the subitems and once without, then never again.
+  assert.equal(calls.filter((call) => call.query.includes('label_style')).length, 2)
+  assert.ok(calls.slice(-1)[0]?.query.includes('subitems'))
 })
 
 test('lists the boards the user can be assigned on, with their workspace, and reads no item', async () => {
@@ -392,6 +394,8 @@ test('reads only the chosen boards, in one board query, never listing the others
       return { me: { id: '1', name: 'Ada' }, boards: [board('20', people)] }
     }
     if (named(call, 'GetBoardAssignedItems')) return itemsPage(null, [item('201')])
+    // A board without subitems.
+    if (named(call, 'GetSubitemBoards')) return { boards: [{ id: '20', columns: [] }] }
     throw new Error(`unexpected query ${call.query}`)
   })
 
@@ -412,4 +416,116 @@ test('rejects a board choice it cannot read', async () => {
   )
   await assert.rejects(readAssignedTasks('corp.monday.com', graphql, { boardsOnly: true, boardIds: ['1'] }), /cannot be combined/)
   assert.equal(calls.length, 0)
+})
+
+const subitem = (id: string, name: string, boardId = '900', columnValues: unknown[] = []) =>
+  ({ id, name, board: { id: boardId }, column_values: columnValues })
+
+test("lists each item's subitems right after it, in its group, on their own board", async () => {
+  const { graphql, calls } = fakeGraphql((call) => {
+    if (named(call, 'InitialAssignedTasksData')) return { me: { id: '1', name: 'Ada' }, boards: [board('10', people)] }
+    return itemsPage(null, [{
+      ...item('100', 'Login form'),
+      group: { id: 'topics', title: 'This week', color: '#FDAB3D' },
+      subitems: [
+        subitem('501', 'Validate the email', '900', [
+          { id: 'status', type: 'status', text: 'Done', column: { title: 'Status' }, label_style: { color: '#00C875' } }
+        ]),
+        subitem('502', 'Show the error'),
+        { id: 'not-a-number', name: 'Odd', board: { id: '900' } }
+      ]
+    }, item('101', 'Docs')])
+  })
+
+  const result = await readAssignedTasks('corp.monday.com', graphql)
+
+  assert.ok(calls.some((call) => call.query.includes('subitems')))
+  assert.deepEqual(result.tasks.map((task) => [task.boardId, task.itemId, task.parentBoardId ?? null, task.parentItemId ?? null]), [
+    ['10', '100', null, null],
+    ['900', '501', '10', '100'],
+    ['900', '502', '10', '100'],
+    ['10', '101', null, null]
+  ])
+  const [, first] = result.tasks
+  assert.equal(first?.title, 'Validate the email')
+  assert.equal(first?.boardName, 'Board 10')
+  assert.equal(first?.sourceUrl, 'https://corp.monday.com/boards/900/pulses/501')
+  assert.deepEqual(first?.group, { id: 'topics', title: 'This week', color: '#fdab3d' })
+  assert.deepEqual(first?.columns, [{ id: 'status', title: 'Status', type: 'status', text: 'Done', color: '#00c875' }])
+  assert.equal(result.complete, false)
+  assert.ok(result.warnings.some((warning) => warning.includes('unexpected shape on board 10')))
+})
+
+test('reads the subitems assigned to the user on a chosen board, with a parent assigned to someone else', async () => {
+  const { graphql, calls } = fakeGraphql((call) => {
+    if (named(call, 'GetChosenBoards')) return { me: { id: '1', name: 'Ada' }, boards: [board('20', people)] }
+    if (named(call, 'GetBoardAssignedItems')) return itemsPage(null, [{ ...item('201', 'Mine'), subitems: [subitem('903', 'Under mine')] }])
+    if (named(call, 'GetSubitemBoards')) {
+      return { boards: [{ id: '20', columns: [{ id: 'subitems', settings_str: '{"allowMultipleItems":true,"boardIds":[900]}' }] }] }
+    }
+    if (named(call, 'GetSubitemBoardColumns')) {
+      assert.deepEqual(call.variables, { ids: ['900'] })
+      return { boards: [board('900', [{ id: 'owner', type: 'people' }, { id: 'status', type: 'status' }])] }
+    }
+    if (named(call, 'GetAssignedSubitems')) {
+      return itemsPage(null, [
+        { ...subitem('901', 'My part'), parent_item: { ...item('202', 'Not mine'), group: { id: 'later', title: 'Later', color: '#579BFC' } } },
+        // Listed already under its assigned parent.
+        { ...subitem('903', 'Under mine'), parent_item: item('201', 'Mine') },
+        { ...subitem('904', 'Mine too'), parent_item: item('201', 'Mine') }
+      ])
+    }
+    throw new Error(`unexpected query ${call.query}`)
+  })
+
+  const result = await readAssignedTasks('corp.monday.com', graphql, { boardIds: ['20'] })
+
+  assert.deepEqual(result.tasks.map((task) => [task.boardId, task.itemId, task.parentItemId ?? null]), [
+    ['20', '201', null],
+    ['900', '903', '201'],
+    ['20', '202', null],
+    ['900', '901', '202'],
+    ['900', '904', '201']
+  ])
+  assert.deepEqual(result.tasks.find((task) => task.itemId === '901')?.group, { id: 'later', title: 'Later', color: '#579bfc' })
+  const assigned = calls.find((call) => named(call, 'GetAssignedSubitems'))
+  assert.deepEqual(assigned?.variables, {
+    ids: ['900'],
+    params: { operator: 'or', rules: [{ column_id: 'owner', compare_value: ['assigned_to_me'], operator: 'any_of' }] }
+  })
+  assert.equal(result.complete, true)
+})
+
+test('reads the items without their subitems when monday refuses the subitems', async () => {
+  const { graphql, calls } = fakeGraphql((call) => {
+    if (named(call, 'GetChosenBoards')) return { me: { id: '1', name: 'Ada' }, boards: [board('20', people)] }
+    if (call.query.includes('subitems')) throw new Error('monday API: Cannot query field "subitems" on type "Item"')
+    if (named(call, 'GetBoardAssignedItems')) return itemsPage(null, [item('201', 'Mine')])
+    throw new Error(`unexpected query ${call.query}`)
+  })
+
+  const result = await readAssignedTasks('corp.monday.com', graphql, { boardIds: ['20'] })
+
+  assert.deepEqual(result.tasks.map((task) => task.itemId), ['201'])
+  // The board view's columns stay; only the subitems are left out, and no subitems board is read.
+  assert.ok(result.tasks.every((task) => 'columns' in task))
+  assert.ok(!calls.some((call) => named(call, 'GetSubitemBoards')))
+  assert.equal(result.complete, true)
+})
+
+test('a subitems read that fails leaves the board read as it was, with a warning', async () => {
+  const { graphql } = fakeGraphql((call) => {
+    if (named(call, 'GetChosenBoards')) return { me: { id: '1', name: 'Ada' }, boards: [board('20', people)] }
+    if (named(call, 'GetBoardAssignedItems')) return itemsPage(null, [{ ...item('201', 'Mine'), subitems: [subitem('903', 'Under mine')] }])
+    if (named(call, 'GetSubitemBoards')) throw new Error('monday API: settings_str is deprecated')
+    if (named(call, 'GetSubitemBoardColumns')) return { boards: [board('900', people)] }
+    if (named(call, 'GetAssignedSubitems')) throw new Error('monday API: complexity budget exhausted')
+    throw new Error(`unexpected query ${call.query}`)
+  })
+
+  const result = await readAssignedTasks('corp.monday.com', graphql, { boardIds: ['20'] })
+
+  assert.deepEqual(result.tasks.map((task) => task.itemId), ['201', '903'])
+  assert.equal(result.complete, false)
+  assert.ok(result.warnings.some((warning) => warning.includes('subitems assigned to you on board 20') && warning.includes('complexity budget')))
 })

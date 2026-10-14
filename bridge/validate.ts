@@ -268,6 +268,9 @@ export const AssignedTaskSchema = z.object({
     text: z.string().max(10_000),
     color: HexColorSchema,
   })).max(200).optional(),
+  // A subitem's parent item and its board; absent for an item, and from an extension older than subitems.
+  parentItemId: z.string().regex(/^\d{1,20}$/).optional(),
+  parentBoardId: z.string().regex(/^\d{1,20}$/).optional(),
 })
 
 export const AssignedTasksPayloadSchema = z.object({

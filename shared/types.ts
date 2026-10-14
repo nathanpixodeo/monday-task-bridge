@@ -68,6 +68,9 @@ export interface AssignedTask {
   group?: { id: string; title: string; color: string | null }
   /** The item's non-empty column values in board order; absent like `group`. */
   columns?: AssignedColumn[]
+  /** Set for a subitem: its parent item, and the board that item is on (`boardId` is the hidden subitems board). */
+  parentItemId?: string
+  parentBoardId?: string
 }
 
 /** An active board where the user can be assigned (it has a people column), with its workspace's name. */

@@ -56,6 +56,11 @@ const RICH_ITEM_FIELDS =
   'id name group { id title color } column_values { id type text column { title } ... on StatusValue { label_style { color } } }'
 const PLAIN_ITEM_FIELDS = 'id name column_values { id text column { title } }'
 
+// An item's subitems, which monday keeps on a hidden board of their own (the item's board's subitems board).
+const RICH_SUBITEM_FIELDS =
+  'subitems { id name board { id } column_values { id type text column { title } ... on StatusValue { label_style { color } } } }'
+const PLAIN_SUBITEM_FIELDS = 'subitems { id name board { id } column_values { id text column { title } } }'
+
 const boardItemsQuery = (fields: string) => `query GetBoardAssignedItems($ids: [ID!], $params: ItemsQuery) {
   boards(ids: $ids) {
     items_page(limit: 100, query_params: $params) {
@@ -72,8 +77,56 @@ const nextItemsQuery = (fields: string) => `query GetNextAssignedItems($cursor: 
   }
 }`
 
-const RICH_QUERIES = { first: boardItemsQuery(RICH_ITEM_FIELDS), next: nextItemsQuery(RICH_ITEM_FIELDS) }
-const PLAIN_QUERIES = { first: boardItemsQuery(PLAIN_ITEM_FIELDS), next: nextItemsQuery(PLAIN_ITEM_FIELDS) }
+interface FieldLevel {
+  /** The board view's group and typed columns. */
+  rich: boolean
+  /** Each item's subitems. */
+  subitems: boolean
+  first: string
+  next: string
+}
+
+/**
+ * What a board read asks for, richest first. monday refusing one (an older API, a field it does not grant) steps down to
+ * the next, for that board and every later one: the subitems go before the board-view fields do.
+ */
+const FIELD_LEVELS: readonly FieldLevel[] = [
+  { rich: true, subitems: true, fields: `${RICH_ITEM_FIELDS} ${RICH_SUBITEM_FIELDS}` },
+  { rich: true, subitems: false, fields: RICH_ITEM_FIELDS },
+  { rich: false, subitems: true, fields: `${PLAIN_ITEM_FIELDS} ${PLAIN_SUBITEM_FIELDS}` },
+  { rich: false, subitems: false, fields: PLAIN_ITEM_FIELDS },
+].map(({ fields, ...level }) => ({ ...level, first: boardItemsQuery(fields), next: nextItemsQuery(fields) }))
+
+// The subitems board of a board, named in its subitems column's settings.
+const SUBITEM_BOARDS_QUERY = `query GetSubitemBoards($ids: [ID!]) {
+  boards(ids: $ids) { id columns(types: [subtasks]) { id settings_str } }
+}`
+
+const SUBITEM_BOARD_COLUMNS_QUERY = `query GetSubitemBoardColumns($ids: [ID!]) {
+  boards(ids: $ids) { id columns { id type } }
+}`
+
+// A subitem assigned to the user comes with its parent item, which the parent's board read may not have listed.
+const assignedSubitemFields = (rich: boolean) => {
+  const itemFields = rich ? RICH_ITEM_FIELDS : PLAIN_ITEM_FIELDS
+  return `${itemFields} board { id } parent_item { ${itemFields} }`
+}
+
+const assignedSubitemsQuery = (rich: boolean) => `query GetAssignedSubitems($ids: [ID!], $params: ItemsQuery) {
+  boards(ids: $ids) {
+    items_page(limit: 100, query_params: $params) {
+      cursor
+      items { ${assignedSubitemFields(rich)} }
+    }
+  }
+}`
+
+const nextAssignedSubitemsQuery = (rich: boolean) => `query GetNextAssignedSubitems($cursor: String!) {
+  next_items_page(cursor: $cursor, limit: 100) {
+    cursor
+    items { ${assignedSubitemFields(rich)} }
+  }
+}`
 
 /** Only `<sub>.monday.com` with no scheme, path, port or credentials, so requests cannot leave monday. */
 function validateHost(host: string): string {
@@ -232,10 +285,35 @@ function readFields(value: unknown): Record<string, string> {
 
 // ─── Reader ──────────────────────────────────────────────────────────
 
+/** The people-column rule that makes monday return only the items assigned to the user. */
+function assignedToMe(peopleColumnIds: readonly string[]) {
+  return {
+    operator: 'or',
+    rules: peopleColumnIds.map((columnId) => ({
+      column_id: columnId,
+      compare_value: ['assigned_to_me'],
+      operator: 'any_of'
+    }))
+  }
+}
+
+/** The subitems board ids a subitems column's settings name, as `{"boardIds":[123]}`. */
+function subitemBoardIds(settings: unknown): string[] {
+  if (typeof settings !== 'string') return []
+  try {
+    const parsed: unknown = JSON.parse(settings)
+    const ids = isObject(parsed) ? asArray(parsed.boardIds) : null
+    return (ids ?? []).map(readId).filter((id): id is string => id !== null)
+  } catch {
+    return []
+  }
+}
+
 /**
  * Every item on the user's active boards where any people column contains them, filtered by monday
- * (`assigned_to_me`) so unassigned items are never downloaded. Read-only: only queries are sent.
- * A failing board becomes a warning; only a failing user query rejects.
+ * (`assigned_to_me`) so unassigned items are never downloaded, each followed by its subitems. On chosen boards, the
+ * subitems assigned to the user are read too, with their parent item when the board read did not list it.
+ * Read-only: only queries are sent. A failing board becomes a warning; only a failing user query rejects.
  */
 export async function readAssignedTasks(
   host: string,
@@ -309,59 +387,91 @@ export async function readAssignedTasks(
 
   const tasks: AssignedTask[] = []
   const seen = new Set<string>()
-  // Whether monday answers the board-view fields; the first refusal switches to the plain queries for good.
-  let rich = true
+  // What monday answers for a board read; its first refusal steps down to the next level for good.
+  let level = 0
+  const fields = () => FIELD_LEVELS[level] as FieldLevel
+  // The subitems boards seen while reading, by the board their items are on.
+  const subitemBoards = new Map<string, Set<string>>()
 
-  /** Adds new items of one page; false once the task cap stops the read. */
+  /** One item (or subitem) as a task; null when the task cap stops the read, undefined when it is skipped. */
+  const addTask = (
+    board: Board,
+    value: JsonObject,
+    itemBoardId: string,
+    parent?: { itemId: string; group: AssignedTask['group'] }
+  ): AssignedTask | null | undefined => {
+    const itemId = readId(value.id)
+    if (!itemId) {
+      incomplete(`Skipped an item with an unexpected shape on board ${board.id}`)
+      return undefined
+    }
+    const key = `${itemBoardId}:${itemId}`
+    if (seen.has(key)) return undefined
+    if (tasks.length >= maxTasks) {
+      incomplete(taskCapWarning)
+      return null
+    }
+    seen.add(key)
+    // A subitem is drawn in its parent's group, as monday shows it.
+    const group = parent === undefined ? readGroup(value.group) : parent.group
+    const task: AssignedTask = {
+      accountHost,
+      boardId: itemBoardId,
+      boardName: board.name,
+      itemId,
+      title: readText(value.name),
+      sourceUrl: `https://${accountHost}/boards/${itemBoardId}/pulses/${itemId}`,
+      fields: readFields(value.column_values),
+      ...(group === undefined ? {} : { group }),
+      ...(fields().rich ? { columns: readColumns(value.column_values) } : {}),
+      ...(parent === undefined ? {} : { parentItemId: parent.itemId, parentBoardId: board.id })
+    }
+    tasks.push(task)
+    return task
+  }
+
+  /** An item's subitems right after it; false once the task cap stops the read. */
+  const addSubitems = (board: Board, item: AssignedTask, value: JsonObject): boolean => {
+    for (const subitem of asArray(value.subitems) ?? []) {
+      const subitemBoardId = isObject(subitem) && isObject(subitem.board) ? readId(subitem.board.id) : null
+      if (!isObject(subitem) || !subitemBoardId) {
+        incomplete(`Skipped a subitem with an unexpected shape on board ${board.id}`)
+        continue
+      }
+      const boards = subitemBoards.get(board.id) ?? new Set<string>()
+      subitemBoards.set(board.id, boards.add(subitemBoardId))
+      if (addTask(board, subitem, subitemBoardId, { itemId: item.itemId, group: item.group }) === null) return false
+    }
+    return true
+  }
+
+  /** Adds new items of one page, each with its subitems; false once the task cap stops the read. */
   const addItems = (board: Board, items: unknown[]): boolean => {
     for (const value of items) {
-      const itemId = isObject(value) ? readId(value.id) : null
-      if (!isObject(value) || !itemId) {
+      if (!isObject(value)) {
         incomplete(`Skipped an item with an unexpected shape on board ${board.id}`)
         continue
       }
-      const key = `${board.id}:${itemId}`
-      if (seen.has(key)) continue
-      if (tasks.length >= maxTasks) {
-        incomplete(taskCapWarning)
-        return false
-      }
-      seen.add(key)
-      const group = readGroup(value.group)
-      const columns = readColumns(value.column_values)
-      tasks.push({
-        accountHost,
-        boardId: board.id,
-        boardName: board.name,
-        itemId,
-        title: readText(value.name),
-        sourceUrl: `https://${accountHost}/boards/${board.id}/pulses/${itemId}`,
-        fields: readFields(value.column_values),
-        ...(group === undefined ? {} : { group }),
-        ...(rich ? { columns } : {})
-      })
+      const item = addTask(board, value, board.id)
+      if (item === null) return false
+      if (item !== undefined && fields().subitems && !addSubitems(board, item, value)) return false
     }
     return true
   }
 
   /** Reads every page of one board; false when a cap means no further board should be read. */
   const readBoard = async (board: Board): Promise<boolean> => {
-    const params = {
-      operator: 'or',
-      rules: board.peopleColumnIds.map((columnId) => ({
-        column_id: columnId,
-        compare_value: ['assigned_to_me'],
-        operator: 'any_of'
-      }))
-    }
+    const params = assignedToMe(board.peopleColumnIds)
     let page: ItemsPage
-    try {
-      page = firstBoardItemsPage(await graphql(accountHost, (rich ? RICH_QUERIES : PLAIN_QUERIES).first, { ids: [board.id], params }))
-    } catch (err) {
-      if (!rich) throw err
-      // monday refused the board-view fields: read this and every later board the plain way.
-      rich = false
-      page = firstBoardItemsPage(await graphql(accountHost, PLAIN_QUERIES.first, { ids: [board.id], params }))
+    for (;;) {
+      try {
+        page = firstBoardItemsPage(await graphql(accountHost, fields().first, { ids: [board.id], params }))
+        break
+      } catch (err) {
+        if (level === FIELD_LEVELS.length - 1) throw err
+        // monday refused some of the fields: read this and every later board with fewer.
+        level += 1
+      }
     }
     const cursors = new Set<string>()
     for (;;) {
@@ -376,8 +486,62 @@ export async function readAssignedTasks(
         incomplete(deadlineWarning)
         return false
       }
-      page = nextItemsPage(await graphql(accountHost, (rich ? RICH_QUERIES : PLAIN_QUERIES).next, { cursor: page.cursor }))
+      page = nextItemsPage(await graphql(accountHost, fields().next, { cursor: page.cursor }))
     }
+  }
+
+  /**
+   * The subitems assigned to the user on a chosen board's subitems boards, each after its parent item, which is added
+   * when the board read did not list it (the parent is assigned to someone else). False when a cap stops the read.
+   */
+  const readAssignedSubitems = async (board: Board): Promise<boolean> => {
+    const boardIds = new Set(subitemBoards.get(board.id) ?? [])
+    try {
+      const [answer] = boardList(await graphql(accountHost, SUBITEM_BOARDS_QUERY, { ids: [board.id] }))
+      for (const column of (isObject(answer) ? asArray(answer.columns) : null) ?? []) {
+        if (isObject(column)) for (const id of subitemBoardIds(column.settings_str)) boardIds.add(id)
+      }
+    } catch (err) {
+      // Without the settings, the subitems boards the board read saw are still checked.
+      if (boardIds.size === 0) {
+        incomplete(`Could not find the subitems of board ${board.id} (${board.name}): ${errorMessage(err)}`)
+        return true
+      }
+    }
+    if (boardIds.size === 0) return true
+
+    const subBoards = boardList(await graphql(accountHost, SUBITEM_BOARD_COLUMNS_QUERY, { ids: [...boardIds] }))
+      .map(parseBoard)
+      .filter((value): value is Board => value !== null && value.peopleColumnIds.length > 0)
+    for (const subBoard of subBoards) {
+      const params = assignedToMe(subBoard.peopleColumnIds)
+      let page = firstBoardItemsPage(await graphql(accountHost, assignedSubitemsQuery(fields().rich), { ids: [subBoard.id], params }))
+      const cursors = new Set<string>()
+      for (;;) {
+        for (const value of page.items) {
+          const parentValue = isObject(value) ? value.parent_item : null
+          const parentId = isObject(parentValue) ? readId(parentValue.id) : null
+          if (!isObject(value) || !isObject(parentValue) || !parentId) {
+            incomplete(`Skipped a subitem with an unexpected shape on board ${subBoard.id}`)
+            continue
+          }
+          // The parent first, unless the board read listed it already.
+          const known = tasks.find((task) => task.boardId === board.id && task.itemId === parentId)
+          const parent = known ?? addTask(board, parentValue, board.id)
+          if (parent === null) return false
+          const group = parent === undefined ? readGroup(parentValue.group) : parent.group
+          if (addTask(board, value, subBoard.id, { itemId: parentId, group }) === null) return false
+        }
+        if (!page.cursor || cursors.has(page.cursor)) return true
+        cursors.add(page.cursor)
+        if (Date.now() >= deadline) {
+          incomplete(deadlineWarning)
+          return false
+        }
+        page = nextItemsPage(await graphql(accountHost, nextAssignedSubitemsQuery(fields().rich), { cursor: page.cursor }))
+      }
+    }
+    return true
   }
 
   for (const value of boards) {
@@ -400,6 +564,14 @@ export async function readAssignedTasks(
       if (!(await readBoard(board))) break
     } catch (err) {
       incomplete(`Could not read board ${board.id} (${board.name}): ${errorMessage(err)}`)
+      continue
+    }
+    // Only a chosen board costs the extra reads of its assigned subitems.
+    if (!chosen || !fields().subitems) continue
+    try {
+      if (!(await readAssignedSubitems(board))) break
+    } catch (err) {
+      incomplete(`Could not read the subitems assigned to you on board ${board.id} (${board.name}): ${errorMessage(err)}`)
     }
   }
 
