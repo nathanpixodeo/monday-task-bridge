@@ -34,14 +34,15 @@ const MORE_BOARDS_QUERY = `query GetMoreActiveBoards($page: Int!) {
   boards(limit: ${BOARD_PAGE_SIZE}, page: $page, state: active) { id name columns { id type } }
 }`
 
-// The board picker also names each board's workspace; reading items never needs it.
+// The board picker also names each board's workspace, and its type: monday keeps the subitems of a board on a hidden
+// board of its own ("Subitems of ...", type sub_items_board), which the owner never picks. Reading items needs neither.
 const INITIAL_PICKER_QUERY = `query InitialAssignableBoards($page: Int!) {
   me { id name }
-  boards(limit: ${BOARD_PAGE_SIZE}, page: $page, state: active) { id name workspace { name } columns { id type } }
+  boards(limit: ${BOARD_PAGE_SIZE}, page: $page, state: active) { id name type workspace { name } columns { id type } }
 }`
 
 const MORE_PICKER_QUERY = `query GetMoreAssignableBoards($page: Int!) {
-  boards(limit: ${BOARD_PAGE_SIZE}, page: $page, state: active) { id name workspace { name } columns { id type } }
+  boards(limit: ${BOARD_PAGE_SIZE}, page: $page, state: active) { id name type workspace { name } columns { id type } }
 }`
 
 const CHOSEN_BOARDS_QUERY = `query GetChosenBoards($ids: [ID!]) {
@@ -164,6 +165,8 @@ function errorMessage(err: unknown): string {
 interface Board {
   id: string
   name: string
+  /** monday's board type (board, sub_items_board, document, ...); empty when the answer did not say. */
+  type: string
   workspace: string | null
   peopleColumnIds: string[]
 }
@@ -191,7 +194,7 @@ function parseBoard(value: unknown): Board | null {
     }
   }
   const workspace = isObject(value.workspace) ? readText(value.workspace.name) : ''
-  return { id, name: readText(value.name), workspace: workspace || null, peopleColumnIds }
+  return { id, name: readText(value.name), type: readText(value.type), workspace: workspace || null, peopleColumnIds }
 }
 
 function parseItemsPage(value: unknown): ItemsPage {
@@ -295,8 +298,11 @@ export async function readAssignedTasks(
         incomplete('Skipped a board with an unexpected shape')
         continue
       }
-      // Nobody can be assigned on a board without a people column
-      if (board.peopleColumnIds.length) assignable.push({ id: board.id, name: board.name, workspace: board.workspace })
+      // Only real boards: a subitems board or a doc is never offered, and nobody can be assigned without a people column
+      const realBoard = board.type === '' || board.type === 'board'
+      if (realBoard && board.peopleColumnIds.length) {
+        assignable.push({ id: board.id, name: board.name, workspace: board.workspace })
+      }
     }
     return { accountHost, user, tasks: [], boards: assignable, warnings, complete, checkedAt: new Date().toISOString() }
   }

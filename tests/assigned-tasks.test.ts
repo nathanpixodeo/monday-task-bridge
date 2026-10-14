@@ -361,8 +361,12 @@ test('lists the boards the user can be assigned on, with their workspace, and re
       return {
         me: { id: '1', name: 'Ada' },
         boards: [
-          { id: '10', name: 'Web', workspace: { name: 'Engineering' }, columns: people },
-          { id: '20', name: 'Notes', workspace: { name: 'Engineering' }, columns: [{ id: 'text', type: 'text' }] },
+          { id: '10', name: 'Web', type: 'board', workspace: { name: 'Engineering' }, columns: people },
+          { id: '20', name: 'Notes', type: 'board', workspace: { name: 'Engineering' }, columns: [{ id: 'text', type: 'text' }] },
+          // The hidden board that holds Web's subitems, and a doc: neither is a board to pick
+          { id: '11', name: 'Subitems of Web', type: 'sub_items_board', workspace: { name: 'Engineering' }, columns: people },
+          { id: '12', name: 'Plan', type: 'document', workspace: { name: 'Engineering' }, columns: people },
+          // An answer without a type is still offered
           { id: '30', name: 'Ops', workspace: null, columns: people }
         ]
       }
