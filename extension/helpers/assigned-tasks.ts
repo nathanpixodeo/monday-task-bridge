@@ -3,7 +3,7 @@
  * APIs so it can be unit-tested; the caller supplies the session-authenticated GraphQL call.
  */
 
-import type { AssignedTask, AssignedTasks } from '../../shared/types'
+import type { AssignedColumn, AssignedTask, AssignedTasks } from '../../shared/types'
 
 /**
  * Runs one GraphQL request on `https://<host>/v2` and resolves with its `data` object. The answer is
@@ -28,21 +28,30 @@ const MORE_BOARDS_QUERY = `query GetMoreActiveBoards($page: Int!) {
   boards(limit: ${BOARD_PAGE_SIZE}, page: $page, state: active) { id name columns { id type } }
 }`
 
-const BOARD_ITEMS_QUERY = `query GetBoardAssignedItems($ids: [ID!], $params: ItemsQuery) {
+// The board view needs each item's group and typed column values with their status colours. An API that refuses
+// those fields gets the plain item query instead, which is all the drafting itself needs.
+const RICH_ITEM_FIELDS =
+  'id name group { id title color } column_values { id type text column { title } ... on StatusValue { label_style { color } } }'
+const PLAIN_ITEM_FIELDS = 'id name column_values { id text column { title } }'
+
+const boardItemsQuery = (fields: string) => `query GetBoardAssignedItems($ids: [ID!], $params: ItemsQuery) {
   boards(ids: $ids) {
     items_page(limit: 100, query_params: $params) {
       cursor
-      items { id name column_values { id text column { title } } }
+      items { ${fields} }
     }
   }
 }`
 
-const NEXT_ITEMS_QUERY = `query GetNextAssignedItems($cursor: String!) {
+const nextItemsQuery = (fields: string) => `query GetNextAssignedItems($cursor: String!) {
   next_items_page(cursor: $cursor, limit: 100) {
     cursor
-    items { id name column_values { id text column { title } } }
+    items { ${fields} }
   }
 }`
+
+const RICH_QUERIES = { first: boardItemsQuery(RICH_ITEM_FIELDS), next: nextItemsQuery(RICH_ITEM_FIELDS) }
+const PLAIN_QUERIES = { first: boardItemsQuery(PLAIN_ITEM_FIELDS), next: nextItemsQuery(PLAIN_ITEM_FIELDS) }
 
 /** Only `<sub>.monday.com` with no scheme, path, port or credentials, so requests cannot leave monday. */
 function validateHost(host: string): string {
@@ -90,6 +99,38 @@ function readId(value: unknown): string | null {
 
 function readText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i
+// Group and column ids are monday's own keys (`topics`, `status_1`); anything else is dropped.
+const KEY = /^[A-Za-z0-9_-]{1,128}$/
+
+/** A colour only as `#rrggbb`, so the Hub never paints with anything monday did not say. */
+function readColor(value: unknown): string | null {
+  const color = readText(value)
+  return HEX_COLOR.test(color) ? color.toLowerCase() : null
+}
+
+function readGroup(value: unknown): AssignedTask['group'] {
+  if (!isObject(value)) return undefined
+  const id = readText(value.id)
+  if (!KEY.test(id)) return undefined
+  return { id, title: readText(value.title), color: readColor(value.color) }
+}
+
+/** The non-empty column values in the order monday lists them, which is the board's column order. */
+function readColumns(value: unknown): AssignedColumn[] {
+  const columns: AssignedColumn[] = []
+  for (const columnValue of asArray(value) ?? []) {
+    if (!isObject(columnValue)) continue
+    const id = readText(columnValue.id)
+    const text = readText(columnValue.text)
+    if (!KEY.test(id) || !text) continue
+    const title = isObject(columnValue.column) ? readText(columnValue.column.title) : ''
+    const style = isObject(columnValue.label_style) ? columnValue.label_style : null
+    columns.push({ id, title: title || id, type: readText(columnValue.type), text, color: readColor(style?.color) })
+  }
+  return columns
 }
 
 function errorMessage(err: unknown): string {
@@ -218,6 +259,8 @@ export async function readAssignedTasks(
 
   const tasks: AssignedTask[] = []
   const seen = new Set<string>()
+  // Whether monday answers the board-view fields; the first refusal switches to the plain queries for good.
+  let rich = true
 
   /** Adds new items of one page; false once the task cap stops the read. */
   const addItems = (board: Board, items: unknown[]): boolean => {
@@ -234,6 +277,8 @@ export async function readAssignedTasks(
         return false
       }
       seen.add(key)
+      const group = readGroup(value.group)
+      const columns = readColumns(value.column_values)
       tasks.push({
         accountHost,
         boardId: board.id,
@@ -241,7 +286,9 @@ export async function readAssignedTasks(
         itemId,
         title: readText(value.name),
         sourceUrl: `https://${accountHost}/boards/${board.id}/pulses/${itemId}`,
-        fields: readFields(value.column_values)
+        fields: readFields(value.column_values),
+        ...(group === undefined ? {} : { group }),
+        ...(rich ? { columns } : {})
       })
     }
     return true
@@ -257,7 +304,15 @@ export async function readAssignedTasks(
         operator: 'any_of'
       }))
     }
-    let page = firstBoardItemsPage(await graphql(accountHost, BOARD_ITEMS_QUERY, { ids: [board.id], params }))
+    let page: ItemsPage
+    try {
+      page = firstBoardItemsPage(await graphql(accountHost, (rich ? RICH_QUERIES : PLAIN_QUERIES).first, { ids: [board.id], params }))
+    } catch (err) {
+      if (!rich) throw err
+      // monday refused the board-view fields: read this and every later board the plain way.
+      rich = false
+      page = firstBoardItemsPage(await graphql(accountHost, PLAIN_QUERIES.first, { ids: [board.id], params }))
+    }
     const cursors = new Set<string>()
     for (;;) {
       if (!addItems(board, page.items)) return false
@@ -271,7 +326,7 @@ export async function readAssignedTasks(
         incomplete(deadlineWarning)
         return false
       }
-      page = nextItemsPage(await graphql(accountHost, NEXT_ITEMS_QUERY, { cursor: page.cursor }))
+      page = nextItemsPage(await graphql(accountHost, (rich ? RICH_QUERIES : PLAIN_QUERIES).next, { cursor: page.cursor }))
     }
   }
 

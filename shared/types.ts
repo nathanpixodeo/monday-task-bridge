@@ -45,6 +45,17 @@ export interface CapturePayload {
   images: ImageUpload[]
 }
 
+/** One non-empty column value of an item, as its board shows it. */
+export interface AssignedColumn {
+  id: string
+  title: string
+  /** monday's column type: status, people, date, numbers, text, ... */
+  type: string
+  text: string
+  /** The hex colour of a status label (`#00c875`); null for other columns or an unknown colour. */
+  color: string | null
+}
+
 export interface AssignedTask {
   accountHost: string
   boardId: string
@@ -53,6 +64,10 @@ export interface AssignedTask {
   title: string
   sourceUrl: string
   fields: Record<string, string>
+  /** The item's group on its board; absent when the extension or monday's API did not give it. */
+  group?: { id: string; title: string; color: string | null }
+  /** The item's non-empty column values in board order; absent like `group`. */
+  columns?: AssignedColumn[]
 }
 
 export interface AssignedTasks {

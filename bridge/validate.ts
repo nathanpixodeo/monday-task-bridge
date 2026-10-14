@@ -227,6 +227,9 @@ export const ListAssignedTasksBodySchema = z.object({
   accountHost: z.string().regex(MONDAY_HOST_RE).optional(),
 })
 
+const HexColorSchema = z.string().regex(/^#[0-9a-f]{6}$/i).nullable()
+const MondayKeySchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)
+
 export const AssignedTaskSchema = z.object({
   accountHost: z.string().max(256),
   boardId: z.string().max(128),
@@ -235,6 +238,15 @@ export const AssignedTaskSchema = z.object({
   title: z.string().max(1000),
   sourceUrl: z.string().max(2048),
   fields: z.record(z.string().max(256), z.string().max(10_000)),
+  // Absent from an extension older than the board view.
+  group: z.object({ id: MondayKeySchema, title: z.string().max(1000), color: HexColorSchema }).optional(),
+  columns: z.array(z.object({
+    id: MondayKeySchema,
+    title: z.string().max(256),
+    type: z.string().max(64),
+    text: z.string().max(10_000),
+    color: HexColorSchema,
+  })).max(200).optional(),
 })
 
 export const AssignedTasksPayloadSchema = z.object({

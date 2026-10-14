@@ -113,7 +113,12 @@ test('skips boards without people columns and queries only boards with people co
     itemId: '301',
     title: 'Task 1',
     sourceUrl: 'https://team.monday.com/boards/202/pulses/301',
-    fields: { Status: 'In Progress', notes: 'Check it' }
+    fields: { Status: 'In Progress', notes: 'Check it' },
+    // An item without a group gets none; its non-empty columns keep the order monday gave them.
+    columns: [
+      { id: 'status', title: 'Status', type: '', text: 'In Progress', color: null },
+      { id: 'notes', title: 'notes', type: '', text: 'Check it', color: null }
+    ]
   }])
   assert.equal(result.complete, true)
 })
@@ -297,4 +302,55 @@ test('stops at the deadline and reports it', async () => {
   assert.deepEqual(result.tasks, [])
   assert.equal(result.complete, false)
   assert.ok(result.warnings.some((w) => w.includes('5 ms time limit')))
+})
+
+test('reads each item group and its typed column values with status colours, in board order', async () => {
+  const { graphql, calls } = fakeGraphql((call) => {
+    if (named(call, 'InitialAssignedTasksData')) return { me: { id: '1', name: 'Ada' }, boards: [board('10', people)] }
+    return itemsPage(null, [{
+      id: '100',
+      name: 'Login form',
+      group: { id: 'topics', title: 'This week', color: '#FDAB3D' },
+      column_values: [
+        { id: 'status', type: 'status', text: 'Working on it', column: { title: 'Status' }, label_style: { color: '#FDAB3D' } },
+        { id: 'person', type: 'people', text: 'Ada Lovelace', column: { title: 'Owner' } },
+        { id: 'date4', type: 'date', text: '', column: { title: 'Due' } },
+        { id: 'bad id!', type: 'text', text: 'dropped', column: { title: 'Odd' } },
+        { id: 'priority', type: 'status', text: 'High', column: { title: 'Priority' }, label_style: { color: 'red' } }
+      ]
+    }])
+  })
+
+  const result = await readAssignedTasks('corp.monday.com', graphql)
+
+  assert.ok(calls.some((call) => call.query.includes('label_style')))
+  const [task] = result.tasks
+  assert.deepEqual(task?.group, { id: 'topics', title: 'This week', color: '#fdab3d' })
+  assert.deepEqual(task?.columns, [
+    { id: 'status', title: 'Status', type: 'status', text: 'Working on it', color: '#fdab3d' },
+    { id: 'person', title: 'Owner', type: 'people', text: 'Ada Lovelace', color: null },
+    // A colour that is not #rrggbb is never passed on.
+    { id: 'priority', title: 'Priority', type: 'status', text: 'High', color: null }
+  ])
+  // The fields the draft reads stay as they were.
+  assert.equal(task?.fields['Status'], 'Working on it')
+})
+
+test('falls back to the plain item query for good once monday refuses the board-view fields', async () => {
+  const { graphql, calls } = fakeGraphql((call) => {
+    if (named(call, 'InitialAssignedTasksData')) {
+      return { me: { id: '1', name: 'Ada' }, boards: [board('10', people), board('20', people)] }
+    }
+    if (call.query.includes('label_style')) throw new Error('monday API: Cannot query field "label_style" on type "StatusValue"')
+    const [id] = call.variables.ids as string[]
+    return itemsPage(null, [item(`${id}1`)])
+  })
+
+  const result = await readAssignedTasks('corp.monday.com', graphql)
+
+  assert.deepEqual(result.tasks.map((task) => task.itemId), ['101', '201'])
+  assert.ok(result.tasks.every((task) => !('columns' in task) && !('group' in task)))
+  assert.equal(result.complete, true)
+  assert.deepEqual(result.warnings, [])
+  assert.equal(calls.filter((call) => call.query.includes('label_style')).length, 1)
 })
