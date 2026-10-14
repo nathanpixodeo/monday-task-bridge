@@ -69,7 +69,7 @@ async function connectWs() {
       // Do NOT set connected yet — wait for hello-ack
       getConfig().then((c) => {
         if (c.token && ws === socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'hello', token: c.token, capabilities: ['assignedTasks'] } satisfies ExtensionToBridgeMessage))
+          socket.send(JSON.stringify({ type: 'hello', token: c.token, capabilities: ['assignedTasks', 'boardFilter'] } satisfies ExtensionToBridgeMessage))
         }
       })
     }
@@ -95,7 +95,7 @@ async function connectWs() {
           })
         } else if (msg.type === 'list-assigned-tasks') {
           if (!authenticated) return
-          listAssignedTasks(msg.requestId, msg.accountHost, msg.cachedHost).catch((err) => {
+          listAssignedTasks(msg.requestId, msg.accountHost, msg.cachedHost, msg.boardIds, msg.boardsOnly).catch((err) => {
             reportAssignedTasksError(msg.requestId, err instanceof Error ? err.message : String(err))
           })
         }
@@ -744,7 +744,13 @@ async function findAccountHost(): Promise<string | undefined> {
 }
 
 /** Lists the user's assigned tasks and posts them to the bridge, which relays them without storing. */
-async function listAssignedTasks(requestId: string, accountHost?: string, cachedHost?: string) {
+async function listAssignedTasks(
+  requestId: string,
+  accountHost?: string,
+  cachedHost?: string,
+  boardIds?: string[],
+  boardsOnly?: boolean
+) {
   const config = await getConfig()
   if (!config.token) {
     reportAssignedTasksError(requestId, 'Not authenticated')
@@ -764,7 +770,7 @@ async function listAssignedTasks(requestId: string, accountHost?: string, cached
   activeCaptures++
   try {
     await setConfig({ capturing: true })
-    const result = await readAssignedTasks(host, mondayGraphql)
+    const result = await readAssignedTasks(host, mondayGraphql, { boardIds, boardsOnly })
     const res = await fetch('http://127.0.0.1:3457/v1/assigned-tasks', {
       method: 'POST',
       headers: {

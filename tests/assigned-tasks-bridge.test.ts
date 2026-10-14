@@ -127,6 +127,11 @@ test('assigned tasks are relayed from the extension to the bridge and MCP withou
     assert.equal(failingResponse.status, 502)
     assert.deepEqual(await failingResponse.json(), { error: 'monday API: boom' })
 
+    // An extension that cannot filter boards is never asked to: the owner must reload it first
+    const pickerResponse = await send('/v1/list-assigned-tasks', { boardsOnly: true }, adminHeaders)
+    assert.equal(pickerResponse.status, 502)
+    assert.match(((await pickerResponse.json()) as { error: string }).error, /EXTENSION_UPDATE_REQUIRED: .*choose a board/)
+
     // Without accountHost the latest snapshot's host is offered as the last resort
     const snapshot: TaskSnapshot = {
       sourceUrl: 'https://cached.monday.com/boards/1/pulses/2',

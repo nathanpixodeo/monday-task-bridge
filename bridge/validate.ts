@@ -225,7 +225,11 @@ export function isMondayHost(host: string): boolean {
 
 export const ListAssignedTasksBodySchema = z.object({
   accountHost: z.string().regex(MONDAY_HOST_RE).optional(),
-})
+  // Read only these boards; the extension reads every active board without it.
+  boardIds: z.array(z.string().regex(/^\d{1,20}$/)).min(1).max(50).optional(),
+  // List the boards to choose from instead of reading tasks.
+  boardsOnly: z.boolean().optional(),
+}).refine((body) => !(body.boardsOnly && body.boardIds), { message: 'boardsOnly and boardIds cannot be combined' })
 
 const HexColorSchema = z.string().regex(/^#[0-9a-f]{6}$/i).nullable()
 const MondayKeySchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)
@@ -256,6 +260,11 @@ export const AssignedTasksPayloadSchema = z.object({
     user: z.object({ id: z.string().max(128), name: z.string().max(256) }),
     // The extension stops at 1000 tasks
     tasks: z.array(AssignedTaskSchema).max(1000),
+    boards: z.array(z.object({
+      id: z.string().regex(/^\d{1,20}$/),
+      name: z.string().max(1000),
+      workspace: z.string().max(1000).nullable(),
+    })).max(1000).optional(),
     warnings: z.array(z.string().max(4000)).max(500),
     complete: z.boolean(),
     checkedAt: z.string().max(128),

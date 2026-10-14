@@ -354,3 +354,58 @@ test('falls back to the plain item query for good once monday refuses the board-
   assert.deepEqual(result.warnings, [])
   assert.equal(calls.filter((call) => call.query.includes('label_style')).length, 1)
 })
+
+test('lists the boards the user can be assigned on, with their workspace, and reads no item', async () => {
+  const { graphql, calls } = fakeGraphql((call) => {
+    if (named(call, 'InitialAssignableBoards')) {
+      return {
+        me: { id: '1', name: 'Ada' },
+        boards: [
+          { id: '10', name: 'Web', workspace: { name: 'Engineering' }, columns: people },
+          { id: '20', name: 'Notes', workspace: { name: 'Engineering' }, columns: [{ id: 'text', type: 'text' }] },
+          { id: '30', name: 'Ops', workspace: null, columns: people }
+        ]
+      }
+    }
+    throw new Error(`unexpected query ${call.query}`)
+  })
+
+  const result = await readAssignedTasks('corp.monday.com', graphql, { boardsOnly: true })
+
+  assert.deepEqual(result.boards, [
+    { id: '10', name: 'Web', workspace: 'Engineering' },
+    { id: '30', name: 'Ops', workspace: null }
+  ])
+  assert.deepEqual(result.tasks, [])
+  assert.equal(result.complete, true)
+  assert.equal(calls.length, 1)
+})
+
+test('reads only the chosen boards, in one board query, never listing the others', async () => {
+  const { graphql, calls } = fakeGraphql((call) => {
+    if (named(call, 'GetChosenBoards')) {
+      assert.deepEqual(call.variables, { ids: ['20'] })
+      return { me: { id: '1', name: 'Ada' }, boards: [board('20', people)] }
+    }
+    if (named(call, 'GetBoardAssignedItems')) return itemsPage(null, [item('201')])
+    throw new Error(`unexpected query ${call.query}`)
+  })
+
+  const result = await readAssignedTasks('corp.monday.com', graphql, { boardIds: ['20'] })
+
+  assert.deepEqual(result.tasks.map((task) => `${task.boardId}:${task.itemId}`), ['20:201'])
+  assert.equal(result.boards, undefined)
+  assert.ok(calls.every((call) => !named(call, 'InitialAssignedTasksData') && !named(call, 'GetMoreActiveBoards')))
+})
+
+test('rejects a board choice it cannot read', async () => {
+  const { graphql, calls } = fakeGraphql(() => ({}))
+
+  await assert.rejects(readAssignedTasks('corp.monday.com', graphql, { boardIds: ['12a'] }), /numeric monday board ids/)
+  await assert.rejects(
+    readAssignedTasks('corp.monday.com', graphql, { boardIds: Array.from({ length: 51 }, (_, index) => String(index + 1)) }),
+    /at most 50 boards/
+  )
+  await assert.rejects(readAssignedTasks('corp.monday.com', graphql, { boardsOnly: true, boardIds: ['1'] }), /cannot be combined/)
+  assert.equal(calls.length, 0)
+})

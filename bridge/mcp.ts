@@ -5,6 +5,7 @@
  *   monday_read_open_task   – request live capture from extension
  *   monday_read_task        – capture any task by URL or board+item ID
  *   monday_list_assigned_tasks – list tasks assigned to the signed-in user (live, not stored)
+ *   monday_list_boards      – list the boards the user can be assigned on, to read one at a time
  *   monday_get_task         – retrieve stored snapshot (optional boardId/itemId)
  *   monday_get_image        – return original image bytes as ImageContent
  *   monday_list_tasks       – list stored snapshots
@@ -183,9 +184,24 @@ mcp.tool(
     'Requires Chrome running with the extension connected (power on). Waits up to 180s.',
   {
     accountHost: z.string().optional().describe('e.g. team.monday.com; defaults to the host of an open monday tab, then of the latest cached task'),
+    boardIds: z.array(z.string()).optional().describe('Read only these boards (ids from monday_list_boards); every active board without it'),
+  },
+  async ({ accountHost, boardIds }) =>
+    captureVia('/v1/list-assigned-tasks', { accountHost, boardIds }, 'Failed to list assigned tasks')
+)
+
+// -- monday_list_boards -----------------------------------------------------
+
+mcp.tool(
+  'monday_list_boards',
+  'List the active boards where the signed-in monday user can be assigned (boards with a people column), with each ' +
+    "board's workspace, to read one at a time with monday_list_assigned_tasks boardIds. No item is read. " +
+    'Requires Chrome running with the extension connected (power on).',
+  {
+    accountHost: z.string().optional().describe('e.g. team.monday.com; defaults to the host of an open monday tab, then of the latest cached task'),
   },
   async ({ accountHost }) =>
-    captureVia('/v1/list-assigned-tasks', { accountHost }, 'Failed to list assigned tasks')
+    captureVia('/v1/list-assigned-tasks', { accountHost, boardsOnly: true }, 'Failed to list boards')
 )
 
 // -- monday_get_task --------------------------------------------------------

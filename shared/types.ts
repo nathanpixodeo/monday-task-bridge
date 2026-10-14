@@ -70,10 +70,19 @@ export interface AssignedTask {
   columns?: AssignedColumn[]
 }
 
+/** An active board where the user can be assigned (it has a people column), with its workspace's name. */
+export interface AssignedBoard {
+  id: string
+  name: string
+  workspace: string | null
+}
+
 export interface AssignedTasks {
   accountHost: string
   user: { id: string; name: string }
   tasks: AssignedTask[]
+  /** Set only by a boards-only read: the boards to choose from, with no task read. */
+  boards?: AssignedBoard[]
   warnings: string[]
   complete: boolean
   checkedAt: string
@@ -94,4 +103,13 @@ export type BridgeToExtensionMessage =
   | { type: 'hello-ack' }
   | { type: 'capture'; requestId: string; url?: string }
   /** `accountHost` was asked for explicitly; `cachedHost` is the latest snapshot's, used only when no monday tab is open. */
-  | { type: 'list-assigned-tasks'; requestId: string; accountHost?: string; cachedHost?: string }
+  | {
+      type: 'list-assigned-tasks'
+      requestId: string
+      accountHost?: string
+      cachedHost?: string
+      /** Read only these boards instead of every active board. */
+      boardIds?: string[]
+      /** List the boards to choose from, reading no task. */
+      boardsOnly?: boolean
+    }

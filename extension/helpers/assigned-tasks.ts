@@ -3,7 +3,7 @@
  * APIs so it can be unit-tested; the caller supplies the session-authenticated GraphQL call.
  */
 
-import type { AssignedColumn, AssignedTask, AssignedTasks } from '../../shared/types'
+import type { AssignedBoard, AssignedColumn, AssignedTask, AssignedTasks } from '../../shared/types'
 
 /**
  * Runs one GraphQL request on `https://<host>/v2` and resolves with its `data` object. The answer is
@@ -15,7 +15,13 @@ export interface AssignedTasksOptions {
   maxBoards?: number
   maxTasks?: number
   deadlineMs?: number
+  /** Read only these boards (numeric ids) instead of listing every active board. */
+  boardIds?: string[]
+  /** List the boards the user can be assigned on, with their workspace, and read no item. */
+  boardsOnly?: boolean
 }
+
+const MAX_BOARD_IDS = 50
 
 const BOARD_PAGE_SIZE = 25
 
@@ -26,6 +32,21 @@ const INITIAL_QUERY = `query InitialAssignedTasksData($page: Int!) {
 
 const MORE_BOARDS_QUERY = `query GetMoreActiveBoards($page: Int!) {
   boards(limit: ${BOARD_PAGE_SIZE}, page: $page, state: active) { id name columns { id type } }
+}`
+
+// The board picker also names each board's workspace; reading items never needs it.
+const INITIAL_PICKER_QUERY = `query InitialAssignableBoards($page: Int!) {
+  me { id name }
+  boards(limit: ${BOARD_PAGE_SIZE}, page: $page, state: active) { id name workspace { name } columns { id type } }
+}`
+
+const MORE_PICKER_QUERY = `query GetMoreAssignableBoards($page: Int!) {
+  boards(limit: ${BOARD_PAGE_SIZE}, page: $page, state: active) { id name workspace { name } columns { id type } }
+}`
+
+const CHOSEN_BOARDS_QUERY = `query GetChosenBoards($ids: [ID!]) {
+  me { id name }
+  boards(ids: $ids) { id name columns { id type } }
 }`
 
 // The board view needs each item's group and typed column values with their status colours. An API that refuses
@@ -72,11 +93,14 @@ function validateHost(host: string): string {
 }
 
 function validateOptions(options: AssignedTasksOptions = {}): Required<AssignedTasksOptions> {
-  const { maxBoards = 100, maxTasks = 1000, deadlineMs = 120_000 } = options
+  const { maxBoards = 100, maxTasks = 1000, deadlineMs = 120_000, boardIds = [], boardsOnly = false } = options
   if (!Number.isInteger(maxBoards) || maxBoards <= 0) throw new Error('maxBoards must be a positive integer')
   if (!Number.isInteger(maxTasks) || maxTasks <= 0) throw new Error('maxTasks must be a positive integer')
   if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new Error('deadlineMs must be a positive number')
-  return { maxBoards, maxTasks, deadlineMs }
+  if (boardIds.length > MAX_BOARD_IDS) throw new Error(`boardIds may name at most ${MAX_BOARD_IDS} boards`)
+  if (boardIds.some((id) => readId(id) === null)) throw new Error('boardIds must be numeric monday board ids')
+  if (boardsOnly && boardIds.length > 0) throw new Error('boardsOnly and boardIds cannot be combined')
+  return { maxBoards, maxTasks, deadlineMs, boardIds, boardsOnly }
 }
 
 // ─── Response narrowing ──────────────────────────────────────────────
@@ -140,6 +164,7 @@ function errorMessage(err: unknown): string {
 interface Board {
   id: string
   name: string
+  workspace: string | null
   peopleColumnIds: string[]
 }
 
@@ -165,7 +190,8 @@ function parseBoard(value: unknown): Board | null {
       peopleColumnIds.push(column.id)
     }
   }
-  return { id, name: readText(value.name), peopleColumnIds }
+  const workspace = isObject(value.workspace) ? readText(value.workspace.name) : ''
+  return { id, name: readText(value.name), workspace: workspace || null, peopleColumnIds }
 }
 
 function parseItemsPage(value: unknown): ItemsPage {
@@ -214,7 +240,7 @@ export async function readAssignedTasks(
   options?: AssignedTasksOptions
 ): Promise<AssignedTasks> {
   const accountHost = validateHost(host)
-  const { maxBoards, maxTasks, deadlineMs } = validateOptions(options)
+  const { maxBoards, maxTasks, deadlineMs, boardIds, boardsOnly } = validateOptions(options)
   const deadline = Date.now() + deadlineMs
 
   const warnings: string[] = []
@@ -226,14 +252,18 @@ export async function readAssignedTasks(
   const deadlineWarning = `Stopped after the ${deadlineMs} ms time limit; remaining boards were not checked`
   const taskCapWarning = `Stopped at ${maxTasks} tasks; more assigned tasks may exist`
 
-  const initial = await graphql(accountHost, INITIAL_QUERY, { page: 1 })
+  const chosen = boardIds.length > 0
+  const initial = chosen
+    ? await graphql(accountHost, CHOSEN_BOARDS_QUERY, { ids: boardIds })
+    : await graphql(accountHost, boardsOnly ? INITIAL_PICKER_QUERY : INITIAL_QUERY, { page: 1 })
   const me = isObject(initial) ? initial.me : null
   const userId = isObject(me) ? readId(me.id) : null
   if (!isObject(me) || !userId) throw new Error('monday API: authenticated user not found')
   const user = { id: userId, name: readText(me.name) }
 
   const boards = [...boardList(initial)]
-  let lastPageSize = boards.length
+  // Chosen boards come in one answer; only a listing of every active board pages.
+  let lastPageSize = chosen ? 0 : boards.length
   let boardPage = 1
   while (lastPageSize === BOARD_PAGE_SIZE) {
     if (boards.length >= maxBoards) break
@@ -243,7 +273,7 @@ export async function readAssignedTasks(
     }
     boardPage++
     try {
-      const more = boardList(await graphql(accountHost, MORE_BOARDS_QUERY, { page: boardPage }))
+      const more = boardList(await graphql(accountHost, boardsOnly ? MORE_PICKER_QUERY : MORE_BOARDS_QUERY, { page: boardPage }))
       boards.push(...more)
       lastPageSize = more.length
     } catch (err) {
@@ -255,6 +285,20 @@ export async function readAssignedTasks(
   if (boards.length > maxBoards || (boards.length === maxBoards && lastPageSize === BOARD_PAGE_SIZE)) {
     incomplete(`Checked only the first ${maxBoards} active boards`)
     boards.length = Math.min(boards.length, maxBoards)
+  }
+
+  if (boardsOnly) {
+    const assignable: AssignedBoard[] = []
+    for (const value of boards) {
+      const board = parseBoard(value)
+      if (!board) {
+        incomplete('Skipped a board with an unexpected shape')
+        continue
+      }
+      // Nobody can be assigned on a board without a people column
+      if (board.peopleColumnIds.length) assignable.push({ id: board.id, name: board.name, workspace: board.workspace })
+    }
+    return { accountHost, user, tasks: [], boards: assignable, warnings, complete, checkedAt: new Date().toISOString() }
   }
 
   const tasks: AssignedTask[] = []

@@ -301,7 +301,11 @@ export function rejectCapture(requestId: string, errorMsg: string): boolean {
   return pending !== undefined
 }
 
-export function requestAssignedTasks(accountHost?: string, cachedHost?: string): Promise<AssignedTasks> {
+export function requestAssignedTasks(
+  accountHost?: string,
+  cachedHost?: string,
+  choice: { boardIds?: string[]; boardsOnly?: boolean } = {}
+): Promise<AssignedTasks> {
   let target: LiveSocket | undefined
   for (const ls of Array.from(liveSockets.values()).reverse()) {
     if (ls.authenticated && ls.ws.readyState === WebSocket.OPEN) {
@@ -312,10 +316,14 @@ export function requestAssignedTasks(accountHost?: string, cachedHost?: string):
   if (target && !target.capabilities?.includes('assignedTasks')) {
     return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to enable assigned tasks'))
   }
+  const choosing = choice.boardIds !== undefined || choice.boardsOnly === true
+  if (choosing && target && !target.capabilities?.includes('boardFilter')) {
+    return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to choose a board'))
+  }
 
-  // JSON.stringify drops the host keys left undefined
+  // JSON.stringify drops the keys left undefined
   return requestFromExtension(pendingAssignedTasks, (requestId) =>
-    ({ type: 'list-assigned-tasks', requestId, accountHost, cachedHost }))
+    ({ type: 'list-assigned-tasks', requestId, accountHost, cachedHost, boardIds: choice.boardIds, boardsOnly: choice.boardsOnly }))
 }
 
 export function resolveAssignedTasks(requestId: string, result: AssignedTasks): boolean {
@@ -349,11 +357,15 @@ async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse
   const bridgeToken = await store.getBridgeToken()
   let extensionConnected = false
   let assignedTasksSupported = false
+  let boardFilterSupported = false
   for (const ls of liveSockets.values()) {
     if (ls.authenticated && ls.ws.readyState === WebSocket.OPEN) {
       extensionConnected = true
       if (ls.capabilities?.includes('assignedTasks')) {
         assignedTasksSupported = true
+      }
+      if (ls.capabilities?.includes('boardFilter')) {
+        boardFilterSupported = true
       }
       break
     }
@@ -363,6 +375,7 @@ async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse
     paired: bridgeToken !== null,
     extensionConnected,
     assignedTasksSupported,
+    boardFilterSupported,
     uptime: process.uptime(),
   })
 }
@@ -632,7 +645,8 @@ async function handleListAssignedTasks(req: http.IncomingMessage, res: http.Serv
   const cachedHost = latestHost && isMondayHost(latestHost) ? latestHost : undefined
 
   try {
-    json(res, 200, await requestAssignedTasks(parsed.data.accountHost, cachedHost))
+    const { accountHost, boardIds, boardsOnly } = parsed.data
+    json(res, 200, await requestAssignedTasks(accountHost, cachedHost, { boardIds, boardsOnly }))
   } catch (err: unknown) {
     if (err instanceof InvalidTargetError) {
       json(res, 400, { error: err.message })
