@@ -3,6 +3,7 @@ import type { Config } from './helpers/storage'
 import { ITEM_QUERY, mapItem } from './helpers/monday-api'
 import type { ApiItem, MappedTask } from './helpers/monday-api'
 import { readAssignedTasks } from './helpers/assigned-tasks'
+import { writeBackToItem, WriteBackTargetError } from './helpers/write-back'
 import type {
   TaskSnapshot,
   TaskAttachment,
@@ -69,7 +70,7 @@ async function connectWs() {
       // Do NOT set connected yet — wait for hello-ack
       getConfig().then((c) => {
         if (c.token && ws === socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'hello', token: c.token, capabilities: ['assignedTasks', 'boardFilter'] } satisfies ExtensionToBridgeMessage))
+          socket.send(JSON.stringify({ type: 'hello', token: c.token, capabilities: ['assignedTasks', 'boardFilter', 'writeBack'] } satisfies ExtensionToBridgeMessage))
         }
       })
     }
@@ -97,6 +98,11 @@ async function connectWs() {
           if (!authenticated) return
           listAssignedTasks(msg.requestId, msg.accountHost, msg.cachedHost, msg.boardIds, msg.boardsOnly).catch((err) => {
             reportAssignedTasksError(msg.requestId, err instanceof Error ? err.message : String(err))
+          })
+        } else if (msg.type === 'write-back') {
+          if (!authenticated) return
+          writeBack(msg).catch((err) => {
+            reportWriteBackError(msg.requestId, err)
           })
         }
       } catch (e) {
@@ -785,6 +791,34 @@ async function listAssignedTasks(
     activeCaptures--
     await setConfig({ capturing: activeCaptures > 0 })
   }
+}
+
+// ─── Write back ──────────────────────────────────────────────────────
+
+/** Writes the status and the update the Hub asked for to one item, and tells the bridge what was written. */
+async function writeBack(msg: Extract<BridgeToExtensionMessage, { type: 'write-back' }>) {
+  const { requestId, accountHost, boardId, itemId, comment, statusLabel } = msg
+  // The bridge validates the target too; re-check so this worker only ever writes to a monday account
+  if (accountHostOf(`https://${accountHost}/`) !== accountHost.toLowerCase()) {
+    sendWs({ type: 'write-back-result', requestId, error: `${accountHost} is not a monday account`, code: 'INVALID_TARGET' })
+    return
+  }
+  activeCaptures++
+  try {
+    await setConfig({ capturing: true })
+    const result = await writeBackToItem(mondayGraphql, { accountHost, boardId, itemId, comment, statusLabel })
+    sendWs({ type: 'write-back-result', requestId, result })
+    await setConfig({ error: null })
+  } finally {
+    activeCaptures--
+    await setConfig({ capturing: activeCaptures > 0 })
+  }
+}
+
+function reportWriteBackError(requestId: string, err: unknown) {
+  const error = err instanceof Error ? err.message : String(err)
+  sendWs({ type: 'write-back-result', requestId, error, code: err instanceof WriteBackTargetError ? 'INVALID_TARGET' : undefined })
+  setConfig({ error: `Writing back to monday failed: ${error}` })
 }
 
 // ─── Utilities ───────────────────────────────────────────────────────

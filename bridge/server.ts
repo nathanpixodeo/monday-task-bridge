@@ -21,6 +21,8 @@ import {
   PairRequestBodySchema,
   PairApproveBodySchema,
   ReadTaskBodySchema,
+  WriteBackBodySchema,
+  WriteBackResultSchema,
   isMondayHost,
   resolveTaskUrl,
   validateCaptureSize,
@@ -30,6 +32,8 @@ import type {
   CapturePayload,
   ExtensionToBridgeMessage,
   BridgeToExtensionMessage,
+  WriteBackRequest,
+  WriteBackResult,
 } from '../shared/types.js'
 
 // ---------------------------------------------------------------------------
@@ -74,10 +78,11 @@ interface PendingRequest<T> {
 
 const pendingCaptures = new Map<string, PendingRequest<CapturePayload>>()
 const pendingAssignedTasks = new Map<string, PendingRequest<AssignedTasks>>()
+const pendingWriteBacks = new Map<string, PendingRequest<WriteBackResult>>()
 
 /** Requests still waiting for the extension; the server steps aside for a new build only at zero. */
 export function pendingCount(): number {
-  return pendingCaptures.size + pendingAssignedTasks.size
+  return pendingCaptures.size + pendingAssignedTasks.size + pendingWriteBacks.size
 }
 
 // scripts/build.mjs defines it per build; run from source (tsx) the server is 'dev' and never steps aside.
@@ -192,6 +197,7 @@ function cleanupSocket(connId: string): void {
   liveSockets.delete(connId)
   rejectPending(pendingCaptures, connId)
   rejectPending(pendingAssignedTasks, connId)
+  rejectPending(pendingWriteBacks, connId)
 }
 
 /** Close every authenticated extension socket, e.g. after its token is revoked. */
@@ -356,9 +362,38 @@ export function rejectAssignedTasks(requestId: string, err: Error, targetConnId?
   return pending !== undefined
 }
 
+/**
+ * Ask the extension to write to one monday item with the signed-in session: add the update, then set the status
+ * label when one is given. The bridge never retries a write: the caller decides what to do with a failure.
+ */
+export function requestWriteBack(request: WriteBackRequest): Promise<WriteBackResult> {
+  let target: LiveSocket | undefined
+  for (const ls of Array.from(liveSockets.values()).reverse()) {
+    if (ls.authenticated && ls.ws.readyState === WebSocket.OPEN) {
+      target = ls
+      break
+    }
+  }
+  if (target && !target.capabilities?.includes('writeBack')) {
+    return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to write back to monday'))
+  }
+  return requestFromExtension(pendingWriteBacks, (requestId) => ({ type: 'write-back', requestId, ...request }))
+}
+
+/** Settle a pending write-back with the extension's answer; only the socket the request went to may answer it. */
+function settleWriteBack(requestId: string, connId: string, answer: { result?: WriteBackResult; error?: Error }): boolean {
+  const existing = pendingWriteBacks.get(requestId)
+  if (!existing || existing.targetConnId !== connId) return false
+  const pending = settle(pendingWriteBacks, requestId)
+  if (answer.error) pending?.reject(answer.error)
+  else if (answer.result) pending?.resolve(answer.result)
+  return pending !== undefined
+}
+
 export function resetCaptures(): void {
   rejectPending(pendingCaptures)
   rejectPending(pendingAssignedTasks)
+  rejectPending(pendingWriteBacks)
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +405,7 @@ async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse
   let extensionConnected = false
   let assignedTasksSupported = false
   let boardFilterSupported = false
+  let writeBackSupported = false
   for (const ls of liveSockets.values()) {
     if (ls.authenticated && ls.ws.readyState === WebSocket.OPEN) {
       extensionConnected = true
@@ -378,6 +414,9 @@ async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse
       }
       if (ls.capabilities?.includes('boardFilter')) {
         boardFilterSupported = true
+      }
+      if (ls.capabilities?.includes('writeBack')) {
+        writeBackSupported = true
       }
       break
     }
@@ -388,6 +427,7 @@ async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse
     extensionConnected,
     assignedTasksSupported,
     boardFilterSupported,
+    writeBackSupported,
     build: BUILD_ID,
     pid: process.pid,
     uptime: process.uptime(),
@@ -671,6 +711,40 @@ async function handleListAssignedTasks(req: http.IncomingMessage, res: http.Serv
   }
 }
 
+async function handleWriteBack(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const adminToken = req.headers['x-bridge-admin-token'] as string | undefined
+  const expectedAdmin = await store.getAdminToken()
+  if (!adminToken || !safeCompare(adminToken, expectedAdmin)) {
+    json(res, 403, { error: 'Invalid admin token' })
+    return
+  }
+
+  const body = await readBody(req, 64 * 1024)
+  let parsedJson: unknown
+  try {
+    parsedJson = JSON.parse(body)
+  } catch {
+    json(res, 400, { error: 'Invalid JSON' })
+    return
+  }
+  const parsed = WriteBackBodySchema.safeParse(parsedJson)
+  if (!parsed.success) {
+    json(res, 400, { error: 'Invalid body', details: parsed.error.issues })
+    return
+  }
+
+  try {
+    json(res, 200, await requestWriteBack(parsed.data))
+  } catch (err: unknown) {
+    if (err instanceof InvalidTargetError) {
+      json(res, 400, { error: err.message })
+      return
+    }
+    const msg = err instanceof Error ? err.message : 'Unknown error'
+    json(res, 502, { error: msg })
+  }
+}
+
 async function handleAssignedTasks(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -826,6 +900,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       return
     }
 
+    // POST /v1/write-back – MCP admin route: write an update (and a status) to one monday item
+    if (method === 'POST' && pathname === '/v1/write-back') {
+      await handleWriteBack(req, res)
+      return
+    }
+
     // POST /v1/assigned-tasks – extension route: answer to a list-assigned-tasks request
     if (method === 'POST' && pathname === '/v1/assigned-tasks') {
       if (!origin || !isExtensionOrigin(origin)) {
@@ -978,6 +1058,26 @@ function setupWebSocket(server: http.Server): void {
         if (msg.error) {
           rejectCapture(msg.requestId, msg.error)
         }
+        return
+      }
+
+      if (msg.type === 'write-back-result') {
+        if (!liveSocket.authenticated) {
+          ws.close(4003, 'Not authenticated')
+          return
+        }
+        if (typeof msg.requestId !== 'string') return
+        if (typeof msg.error === 'string') {
+          const error = msg.error.slice(0, 2000)
+          settleWriteBack(msg.requestId, connId, {
+            error: msg.code === 'INVALID_TARGET' ? new InvalidTargetError(error) : new Error(error)
+          })
+          return
+        }
+        const result = WriteBackResultSchema.safeParse(msg.result)
+        settleWriteBack(msg.requestId, connId, result.success
+          ? { result: result.data }
+          : { error: new Error('Invalid write-back result') })
         return
       }
 

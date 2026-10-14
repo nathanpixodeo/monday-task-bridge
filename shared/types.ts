@@ -93,11 +93,28 @@ export interface AssignedTasksPayload {
   result: AssignedTasks
 }
 
+/** What the Hub asks to write to one monday item: an update, and the Status label to set when one is given. */
+export interface WriteBackRequest {
+  accountHost: string
+  boardId: string
+  itemId: string
+  comment: string
+  statusLabel?: string
+}
+
+/** What the extension wrote: the update it added, and whether it set the status. */
+export interface WriteBackResult {
+  updateId: string | null
+  statusSet: boolean
+}
+
 export type ExtensionToBridgeMessage =
   | { type: 'hello'; token: string; capabilities?: string[] }
   | { type: 'heartbeat' }
   | { type: 'capture-result'; requestId: string; error?: string }
   | { type: 'assigned-tasks-error'; requestId: string; error: string; code?: 'INVALID_TARGET' }
+  /** The answer to a write-back: what was written, or why nothing (or not all of it) was. */
+  | { type: 'write-back-result'; requestId: string; result?: WriteBackResult; error?: string; code?: 'INVALID_TARGET' }
 
 export type BridgeToExtensionMessage =
   | { type: 'hello-ack' }
@@ -113,3 +130,5 @@ export type BridgeToExtensionMessage =
       /** List the boards to choose from, reading no task. */
       boardsOnly?: boolean
     }
+  /** Write to one item with the signed-in session: only ever sent for a write the bridge was asked for. */
+  | ({ type: 'write-back'; requestId: string } & WriteBackRequest)

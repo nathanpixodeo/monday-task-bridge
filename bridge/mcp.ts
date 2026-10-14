@@ -6,6 +6,7 @@
  *   monday_read_task        – capture any task by URL or board+item ID
  *   monday_list_assigned_tasks – list tasks assigned to the signed-in user (live, not stored)
  *   monday_list_boards      – list the boards the user can be assigned on, to read one at a time
+ *   monday_write_back       – add an update (and set the status) on one item; only with MONDAY_BRIDGE_ALLOW_WRITE=1
  *   monday_get_task         – retrieve stored snapshot (optional boardId/itemId)
  *   monday_get_image        – return original image bytes as ImageContent
  *   monday_list_tasks       – list stored snapshots
@@ -203,6 +204,28 @@ mcp.tool(
   async ({ accountHost }) =>
     captureVia('/v1/list-assigned-tasks', { accountHost, boardsOnly: true }, 'Failed to list boards')
 )
+
+// -- monday_write_back ------------------------------------------------------
+
+// Writing is offered only to a client that starts the MCP server with MONDAY_BRIDGE_ALLOW_WRITE=1 (Nexkit Agent Hub,
+// once its owner switched writing back on). Agents that register this server for reading never see the tool.
+if (process.env.MONDAY_BRIDGE_ALLOW_WRITE === '1') {
+  mcp.tool(
+    'monday_write_back',
+    'Add an update to one monday item and, when statusLabel is given, set its Status column to that label. ' +
+      'This WRITES to monday.com with the signed-in Chrome session. ' +
+      'Requires Chrome running with the extension connected (power on).',
+    {
+      accountHost: z.string().describe('e.g. team.monday.com'),
+      boardId: z.string().describe('The board of the item'),
+      itemId: z.string().describe('The item to write to'),
+      comment: z.string().describe('The text of the update added to the item'),
+      statusLabel: z.string().optional().describe("A label of the item's Status column, such as Done; the status stays as it is without it"),
+    },
+    async ({ accountHost, boardId, itemId, comment, statusLabel }) =>
+      captureVia('/v1/write-back', { accountHost, boardId, itemId, comment, statusLabel }, 'Failed to write back to monday')
+  )
+}
 
 // -- monday_get_task --------------------------------------------------------
 

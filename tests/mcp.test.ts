@@ -67,3 +67,36 @@ test('MCP exposes cached task and original image with no monday API token', { ti
     await rm(dataDir, { recursive: true, force: true })
   }
 })
+
+test('MCP offers monday_write_back only to a client that starts it with MONDAY_BRIDGE_ALLOW_WRITE=1', { timeout: 30_000 }, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'monday-bridge-mcp-write-'))
+  const toolsWith = async (extra: Record<string, string>) => {
+    const env: Record<string, string> = {}
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined && key !== 'MONDAY_BRIDGE_ALLOW_WRITE') env[key] = value
+    }
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [resolve('node_modules/tsx/dist/cli.mjs'), 'bridge/mcp.ts'],
+      cwd: process.cwd(),
+      env: { ...env, MONDAY_BRIDGE_DATA_DIR: dataDir, MONDAY_BRIDGE_PORT: '1', ...extra }
+    })
+    const client = new Client({ name: 'monday-bridge-test', version: '1.0.0' })
+    try {
+      await client.connect(transport)
+      return (await client.listTools()).tools.map(tool => tool.name)
+    } finally {
+      await client.close()
+    }
+  }
+
+  try {
+    const reading = await toolsWith({})
+    assert.ok(reading.includes('monday_list_boards'))
+    assert.ok(!reading.includes('monday_write_back'))
+    assert.ok(!(await toolsWith({ MONDAY_BRIDGE_ALLOW_WRITE: 'yes' })).includes('monday_write_back'))
+    assert.ok((await toolsWith({ MONDAY_BRIDGE_ALLOW_WRITE: '1' })).includes('monday_write_back'))
+  } finally {
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})

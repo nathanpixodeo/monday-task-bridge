@@ -231,6 +231,23 @@ export const ListAssignedTasksBodySchema = z.object({
   boardsOnly: z.boolean().optional(),
 }).refine((body) => !(body.boardsOnly && body.boardIds), { message: 'boardsOnly and boardIds cannot be combined' })
 
+// monday's marketing site and login page share the domain but are not accounts.
+const NON_ACCOUNT_HOSTS = new Set(['www.monday.com', 'auth.monday.com'])
+
+export const WriteBackBodySchema = z.object({
+  accountHost: z.string().regex(MONDAY_HOST_RE).refine((host) => !NON_ACCOUNT_HOSTS.has(host.toLowerCase()), 'Not a monday account host'),
+  boardId: z.string().regex(/^\d{1,20}$/),
+  itemId: z.string().regex(/^\d{1,20}$/),
+  comment: z.string().trim().min(1).max(10_000),
+  // A label of the item's Status column; the status is left as it is without it.
+  statusLabel: z.string().trim().min(1).max(100).optional(),
+}).strict()
+
+export const WriteBackResultSchema = z.object({
+  updateId: z.string().regex(/^\d{1,20}$/).nullable(),
+  statusSet: z.boolean(),
+}).strict()
+
 const HexColorSchema = z.string().regex(/^#[0-9a-f]{6}$/i).nullable()
 const MondayKeySchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)
 
