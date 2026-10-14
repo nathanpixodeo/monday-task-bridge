@@ -7,8 +7,11 @@
 
 import http from 'node:http'
 import { randomBytes } from 'node:crypto'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { WebSocketServer, WebSocket } from 'ws'
 import { Store } from './store.js'
+import { DEFAULT_BUILD_CHECK_MS, watchBuild } from './buildWatch.js'
 import { PairingManager, safeCompare } from './pairing.js'
 import {
   AssignedTasksPayloadSchema,
@@ -71,6 +74,15 @@ interface PendingRequest<T> {
 
 const pendingCaptures = new Map<string, PendingRequest<CapturePayload>>()
 const pendingAssignedTasks = new Map<string, PendingRequest<AssignedTasks>>()
+
+/** Requests still waiting for the extension; the server steps aside for a new build only at zero. */
+export function pendingCount(): number {
+  return pendingCaptures.size + pendingAssignedTasks.size
+}
+
+// scripts/build.mjs defines it per build; run from source (tsx) the server is 'dev' and never steps aside.
+declare const __BRIDGE_BUILD__: string | undefined
+export const BUILD_ID = typeof __BRIDGE_BUILD__ === 'string' ? __BRIDGE_BUILD__ : 'dev'
 
 /** The extension could not tell which monday account to read; reported to MCP as INVALID_TARGET. */
 export class InvalidTargetError extends Error {
@@ -376,6 +388,8 @@ async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse
     extensionConnected,
     assignedTasksSupported,
     boardFilterSupported,
+    build: BUILD_ID,
+    pid: process.pid,
     uptime: process.uptime(),
   })
 }
@@ -1029,7 +1043,8 @@ export async function closeServer(server?: http.Server): Promise<void> {
   resetCaptures()
   for (const ls of liveSockets.values()) {
     try {
-      ls.ws.close()
+      // 1012 "service restart": the extension reconnects on its next alarm, still paired.
+      ls.ws.close(1012, 'Bridge restarting')
     } catch {}
   }
   liveSockets.clear()
@@ -1049,7 +1064,21 @@ const isMain = process.argv[1] &&
   (process.argv[1].endsWith('server.ts') || process.argv[1].endsWith('server.js'))
 
 if (isMain) {
-  startServer().catch((err) => {
+  startServer().then((server) => {
+    process.stderr.write(`[bridge] Build ${BUILD_ID}, pid ${process.pid}\n`)
+    // A rebuild leaves this process on the old code: step aside once idle, and the next MCP call starts the new one.
+    const intervalMs = Number(process.env.MONDAY_BRIDGE_BUILD_CHECK_MS) || DEFAULT_BUILD_CHECK_MS
+    watchBuild({
+      file: join(dirname(fileURLToPath(import.meta.url)), 'build-id.txt'),
+      own: BUILD_ID,
+      intervalMs,
+      isIdle: () => pendingCount() === 0,
+      onNewBuild: (id) => {
+        process.stderr.write(`[bridge] New build ${id} on disk; exiting so the next call starts it\n`)
+        void closeServer(server).finally(() => process.exit(0))
+      }
+    })
+  }).catch((err) => {
     process.stderr.write(`[bridge] Fatal: ${err}\n`)
     process.exit(1)
   })

@@ -56,6 +56,9 @@ test('the board picker lists boards and reads one board through an extension tha
 
     const health = await (await fetch(`${base}/health`)).json() as Record<string, unknown>
     assert.equal(health.boardFilterSupported, true)
+    // Run from source the server is a 'dev' build, and says which process it is
+    assert.equal(health.build, 'dev')
+    assert.equal(health.pid, process.pid)
 
     // A choice the bridge cannot pass on is refused before it reaches the extension
     assert.equal((await send('/v1/list-assigned-tasks', { boardIds: ['abc'] }, adminHeaders)).status, 400)
