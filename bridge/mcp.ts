@@ -183,7 +183,7 @@ mcp.tool(
     'Read through the monday web API with the signed-in Chrome session; nothing is cached. ' +
     'Each item comes with its subitems (parentItemId/parentBoardId name the parent); with boardIds, the subitems ' +
     'assigned to the user come too, with their parent item even when that is not assigned to them. ' +
-    'Check `complete` and `warnings`: caps (100 boards, 1000 tasks, 120s) and unreadable boards make the list partial. ' +
+    'Check `complete` and `warnings`: caps (100 boards, 5000 tasks, 120s) and unreadable boards make the list partial. ' +
     'Requires Chrome running with the extension connected (power on). Waits up to 180s.',
   {
     accountHost: z.string().optional().describe('e.g. team.monday.com; defaults to the host of an open monday tab, then of the latest cached task'),

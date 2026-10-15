@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AssignedTaskSchema, resolveTaskUrl } from '../bridge/validate.js'
+import { AssignedTaskSchema, AssignedTasksPayloadSchema, resolveTaskUrl } from '../bridge/validate.js'
+import { MAX_TASKS } from '../extension/helpers/assigned-tasks.js'
 
 test('resolveTaskUrl accepts a full task url including a views segment', () => {
   const url = 'https://team.monday.com/boards/123/views/9/pulses/456'
@@ -28,6 +29,24 @@ test('resolveTaskUrl builds a url from ids and the account host', () => {
 test('resolveTaskUrl errors without a host or without a target', () => {
   assert.ok('error' in resolveTaskUrl({ boardId: '1', itemId: '2' }, null))
   assert.ok('error' in resolveTaskUrl({}, 'team.monday.com'))
+})
+
+test('the bridge takes as many assigned tasks as the extension reads, and no more', () => {
+  const task = (id: number) => ({
+    accountHost: 'corp.monday.com', boardId: '10', boardName: 'Web', itemId: String(id), title: `Task ${id}`,
+    sourceUrl: `https://corp.monday.com/boards/10/pulses/${id}`, fields: {}
+  })
+  const payload = (count: number) => ({
+    requestId: 'req-1',
+    result: {
+      accountHost: 'corp.monday.com', user: { id: '1', name: 'User' },
+      tasks: Array.from({ length: count }, (_, index) => task(index + 1)),
+      warnings: [], complete: true, checkedAt: '2026-10-15T00:00:00.000Z'
+    }
+  })
+  assert.equal(MAX_TASKS, 5000)
+  assert.equal(AssignedTasksPayloadSchema.safeParse(payload(MAX_TASKS)).success, true)
+  assert.equal(AssignedTasksPayloadSchema.safeParse(payload(MAX_TASKS + 1)).success, false)
 })
 
 test('an assigned task keeps its group and typed columns, and only #rrggbb colours', () => {

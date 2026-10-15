@@ -88,7 +88,7 @@ Check with `claude mcp list`, `codex mcp list`, or `agy mcp list`. For another s
 | `monday_bridge_status` | Bridge health, pairing, and extension connection state. |
 | `monday_read_task` | Fresh snapshot of any task by `url`, or by `boardId` + `itemId` (optional `accountHost`, defaulting to the host of the latest cached task). You do not need to open the task. |
 | `monday_read_open_task` | Fresh snapshot of the task open in the active tab, or the first open task tab if another tab is active. |
-| `monday_list_assigned_tasks` | Live list of tasks assigned to you (any people column), with board, link and column texts (optional `accountHost`, defaulting to the host of an open monday tab, then of the latest cached task). Checks up to 100 active boards and 1000 tasks within 120 seconds; `complete` is false and `warnings` explain when a cap or an unreadable board cut the list. Not cached. |
+| `monday_list_assigned_tasks` | Live list of tasks assigned to you (any people column), with board, link and column texts (optional `accountHost`, defaulting to the host of an open monday tab, then of the latest cached task). Checks up to 100 active boards and 5000 tasks (items and subitems) within 120 seconds; `complete` is false and `warnings` explain when a cap or an unreadable board cut the list. Not cached. |
 | `monday_get_task` | Latest cached snapshot, optionally filtered by `boardId` and/or `itemId`. |
 | `monday_get_image` | Original PNG, JPEG, GIF, or WebP bytes for a ready attachment ID. |
 | `monday_list_tasks` | Summaries of locally cached snapshots. |

@@ -278,8 +278,8 @@ export const AssignedTasksPayloadSchema = z.object({
   result: z.object({
     accountHost: z.string().max(256),
     user: z.object({ id: z.string().max(128), name: z.string().max(256) }),
-    // The extension stops at 1000 tasks
-    tasks: z.array(AssignedTaskSchema).max(1000),
+    // The extension stops at 5000 tasks
+    tasks: z.array(AssignedTaskSchema).max(5000),
     boards: z.array(z.object({
       id: z.string().regex(/^\d{1,20}$/),
       name: z.string().max(1000),
@@ -291,8 +291,8 @@ export const AssignedTasksPayloadSchema = z.object({
   }),
 })
 
-/** 1000 tasks with their column texts stay well under this. */
-export const MAX_ASSIGNED_TASKS_BYTES = 25 * 1024 * 1024
+/** 5000 tasks with their column texts stay well under this. */
+export const MAX_ASSIGNED_TASKS_BYTES = 64 * 1024 * 1024
 
 /**
  * Turn a read-task request into a canonical https monday.com task URL so the

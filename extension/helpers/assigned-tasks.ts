@@ -22,6 +22,8 @@ export interface AssignedTasksOptions {
 }
 
 const MAX_BOARD_IDS = 50
+/** Items and subitems together: with every item's subitems, a large account passes 1000 well before its last board. */
+export const MAX_TASKS = 5000
 
 const BOARD_PAGE_SIZE = 25
 
@@ -147,7 +149,7 @@ function validateHost(host: string): string {
 }
 
 function validateOptions(options: AssignedTasksOptions = {}): Required<AssignedTasksOptions> {
-  const { maxBoards = 100, maxTasks = 1000, deadlineMs = 120_000, boardIds = [], boardsOnly = false } = options
+  const { maxBoards = 100, maxTasks = MAX_TASKS, deadlineMs = 120_000, boardIds = [], boardsOnly = false } = options
   if (!Number.isInteger(maxBoards) || maxBoards <= 0) throw new Error('maxBoards must be a positive integer')
   if (!Number.isInteger(maxTasks) || maxTasks <= 0) throw new Error('maxTasks must be a positive integer')
   if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new Error('deadlineMs must be a positive number')
