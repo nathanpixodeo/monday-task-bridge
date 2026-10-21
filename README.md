@@ -26,7 +26,33 @@ The extension uses port `3457`. Keep that port free; the extension currently doe
 
 Commands below use PowerShell on Windows. The `npm` commands also work in a macOS/Linux shell; use that shell's absolute-path syntax when configuring an MCP client.
 
-## Set up
+## Install
+
+One command downloads the bridge, builds it, and registers the MCP server with each agent CLI it finds: Claude Code, Codex, and agy. It then starts the bridge, shows how to load the Chrome extension, and pairs it with the code from the popup. It needs Node.js 22.12+ and Git.
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/main/scripts/install.ps1 | iex
+```
+
+macOS / Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/main/scripts/install.sh | bash
+```
+
+Run the same command again to update, then click **Reload** on the extension card in `chrome://extensions`. The code is installed in `%LOCALAPPDATA%\Programs\monday-task-bridge` on Windows and `~/.monday-task-bridge` on macOS/Linux. Optional environment variables:
+
+| Variable | Effect |
+| --- | --- |
+| `MONDAY_BRIDGE_HOME` | Install into another folder. |
+| `MONDAY_BRIDGE_CLIENTS` | Agent CLIs to register, comma-separated (default `claude,codex,agy`; `none` registers none). |
+| `CLAUDE_CONFIG_DIR` | The Claude Code profile to register with; run the installer once per profile. |
+
+To pair later, open the popup, tap the power button, and run `node <install folder>/dist/bridge/pair-cli.js <code>`.
+
+## Set up from source
 
 From the repository root:
 
@@ -66,7 +92,7 @@ In a macOS/Linux shell, use `curl http://127.0.0.1:3457/health`.
 
 ## Connect an MCP client
 
-The bridge and the MCP server are **separate processes**. The MCP client starts the stdio server, and the MCP server starts the bridge in the background whenever it is not running (its log goes to `bridge.log` in the data directory), so you do not need to keep `npm run bridge` open once paired. From the repository root, register it with your agent CLI:
+The bridge and the MCP server are **separate processes**. The MCP client starts the stdio server, and the MCP server starts the bridge in the background whenever it is not running (its log goes to `bridge.log` in the data directory), so you do not need to keep `npm run bridge` open once paired. The installer registers it for you; to register it by hand, run this from the repository root:
 
 ```powershell
 $bridgeMcp = (Resolve-Path .\dist\bridge\mcp.js).Path

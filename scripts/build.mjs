@@ -15,7 +15,7 @@ await mkdir(bridgeOut, { recursive: true })
 await mkdir(extensionOut, { recursive: true })
 
 await build({
-  entryPoints: ['bridge/server.ts', 'bridge/mcp.ts', 'bridge/pair-cli.ts'],
+  entryPoints: ['bridge/server.ts', 'bridge/mcp.ts', 'bridge/pair-cli.ts', 'bridge/start-cli.ts'],
   outdir: bridgeOut,
   bundle: true,
   packages: 'external',
