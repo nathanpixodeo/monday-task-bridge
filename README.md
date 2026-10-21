@@ -109,13 +109,16 @@ irm https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/main/scri
 
 **Uninstall:**
 
-1. Remove the MCP server from each agent CLI:
+1. Remove the approval rules, then the MCP server, from each agent CLI:
 
    ```powershell
+   node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" manual
    claude mcp remove -s user monday-task-bridge
    codex mcp remove monday-task-bridge
    agy mcp remove monday-task-bridge
    ```
+
+   On macOS/Linux, the first line is `node ~/.monday-task-bridge/dist/bridge/approval-cli.js manual`.
 
 2. Click **Remove** on the extension card in `chrome://extensions`.
 3. Delete the install folder: `%LOCALAPPDATA%\Programs\monday-task-bridge` on Windows, `~/.monday-task-bridge` on macOS/Linux.
@@ -290,6 +293,8 @@ agy mcp add monday-task-bridge node "C:\path\to\monday-task-bridge\dist\bridge\m
 
 No token goes into the client configuration: the MCP server reads its admin token from the data folder.
 
+To read without a yes/no prompt each time, run `npm run approval -- auto` from this folder after registering (see [Approval mode](#approval-mode-auto-or-manual)).
+
 ## Development
 
 ```powershell
@@ -298,6 +303,6 @@ npm test
 npm run build
 ```
 
-The Chrome extension is in `extension/` (the API mapping is in `extension/helpers/monday-api.ts`), the bridge, MCP server, and CLIs are in `bridge/`, shared payload types are in `shared/`, and the installers are in `scripts/`. `npm run mcp` runs the MCP server from source. CI runs install, typecheck, tests, and build on Node.js 24. The build output in `dist/` is not committed.
+The Chrome extension is in `extension/` (the API mapping is in `extension/helpers/monday-api.ts`), the bridge, MCP server, and CLIs (`pair-cli`, `start-cli`, `approval-cli`) are in `bridge/`, shared payload types are in `shared/`, and the installers are in `scripts/`. `npm run mcp` runs the MCP server from source. CI runs install, typecheck, tests, and build on Node.js 24. The build output in `dist/` is not committed.
 
 The extension always uses port `3457`; keep that port free. It does not follow a custom `MONDAY_BRIDGE_PORT` value.
