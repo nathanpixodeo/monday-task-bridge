@@ -115,8 +115,16 @@
     }
 
     Write-Step 'Starting the bridge'
-    Invoke-Checked $node @((Join-Path $dir 'dist\bridge\start-cli.js'))
+    # Started apart from this window: on Windows the bridge would otherwise inherit this script's output handles,
+    # and a caller that reads that output (an agent, CI) would wait for the bridge to exit.
+    $starter = Start-Process -FilePath $node -ArgumentList "`"$(Join-Path $dir 'dist\bridge\start-cli.js')`"" -WindowStyle Hidden -PassThru
+    $null = $starter.Handle
+    $starter.WaitForExit()
+    if ($starter.ExitCode -ne 0) {
+      throw 'The bridge did not start. Its log is bridge.log in %LOCALAPPDATA%\monday-task-bridge.'
+    }
     $status = Invoke-RestMethod $Health -TimeoutSec 5
+    Write-Host '  Bridge running on 127.0.0.1:3457'
     $pairCli = Join-Path $dir 'dist\bridge\pair-cli.js'
     $extension = Join-Path $dir 'dist\extension'
 

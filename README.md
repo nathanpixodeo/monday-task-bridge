@@ -2,33 +2,26 @@
 
 Author: **Nhat Nguyen** · Developed by **Nexkit** · [nathanpixodeo@gmail.com](mailto:nathanpixodeo@gmail.com)
 
-A local Chrome extension and MCP server that let an AI agent read monday.com tasks and their original image attachments through **your signed-in browser session**. It needs no monday API token, administrator-installed app, or monday MCP entitlement: sign in to monday in Chrome once, and the extension does the rest.
+Let an AI agent (Claude Code, Codex, agy, or any MCP client) read monday.com tasks, with their updates and original images, through **your signed-in Chrome**. You need no monday API token, no admin-installed app, and no monday MCP plan: sign in to monday in Chrome once, and the extension does the rest.
 
-> **Project status:** Personal prototype. Typecheck, build, and automated pairing, bridge, API-mapping, and MCP tests pass in CI. Reading tasks through monday's web API has been checked against real tasks; treat `complete` as a best-effort signal and review `warnings` before relying on a snapshot.
+It has two parts that run on your PC:
 
-## What it does
+- **A Chrome extension** that reads tasks with your monday session.
+- **A local bridge with an MCP server** that your agent talks to. The bridge listens on `127.0.0.1:3457` only.
 
-1. An agent asks for a task by link (or for the task open in your active tab).
-2. The extension calls **monday's own web API** (`https://<account>.monday.com/v2`, GraphQL), the same endpoint monday's web app uses, with your browser session and the app's CSRF token. One request returns the task name, every column as readable text, updates with replies and authors, and the attached files. No tab opens and no page is rendered.
-3. Original images are downloaded from monday's file storage and checked byte by byte. Files that are not images are listed in an `Other files` field.
-4. The snapshot goes to a bridge bound to `127.0.0.1:3457`. A separate MCP process exposes cached snapshots and requests fresh reads.
-5. An agent can also list the tasks assigned to you: the extension asks monday for the items on your active boards whose people columns contain you, and the list is relayed to the agent without being cached.
+> **Project status:** Personal prototype. Typecheck, build, and automated tests pass in CI, and reading tasks has been checked against real monday tasks. Treat `complete` as a best-effort signal and read `warnings` before relying on a snapshot.
 
-The extension only reads: it never edits tasks, crawls boards (listing assigned tasks asks monday for your items only), reads or exports cookie values, or substitutes screenshots for original images. It can only access tasks your monday account can see.
+## Quick start
 
-## Requirements
+You need:
 
-- Node.js **22.12+** and npm
-- Google Chrome signed in to your monday.com account, with permission to load an unpacked extension
-- A local MCP client, such as Codex, if you want an agent to use the data
+- Google Chrome, signed in to monday.com
+- [Node.js](https://nodejs.org) 22.12 or newer, and [Git](https://git-scm.com)
+- At least one agent CLI: Claude Code, Codex, or agy
 
-The extension uses port `3457`. Keep that port free; the extension currently does not follow a custom `MONDAY_BRIDGE_PORT` value.
+### 1. Run the installer
 
-Commands below use PowerShell on Windows. The `npm` commands also work in a macOS/Linux shell; use that shell's absolute-path syntax when configuring an MCP client.
-
-## Install
-
-One command downloads the bridge, builds it, and registers the MCP server with each agent CLI it finds: Claude Code, Codex, and agy. It then starts the bridge, shows how to load the Chrome extension, and pairs it with the code from the popup. It needs Node.js 22.12+ and Git.
+Open a terminal and run one command.
 
 Windows (PowerShell):
 
@@ -42,116 +35,224 @@ macOS / Linux:
 curl -fsSL https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/main/scripts/install.sh | bash
 ```
 
-Run the same command again to update, then click **Reload** on the extension card in `chrome://extensions`. The code is installed in `%LOCALAPPDATA%\Programs\monday-task-bridge` on Windows and `~/.monday-task-bridge` on macOS/Linux. Optional environment variables:
+The installer:
+
+- downloads the code and builds it,
+- registers the MCP server with every agent CLI it finds (Claude Code, Codex, agy); you do not run any `mcp add` command yourself,
+- starts the bridge,
+- opens `chrome://extensions` and waits for you to load the extension and pair it (steps 2 and 3).
+
+Keep the terminal open until it says **Done**.
+
+### 2. Load the extension in Chrome
+
+Do this in the Chrome profile that is signed in to monday.com.
+
+1. Open `chrome://extensions` (the installer opens it for you).
+2. Turn on **Developer mode** (top right).
+3. Click **Load unpacked** and choose the extension folder. The installer copies its path to the clipboard (on Windows and macOS):
+
+   | OS | Extension folder |
+   | --- | --- |
+   | Windows | `%LOCALAPPDATA%\Programs\monday-task-bridge\dist\extension` |
+   | macOS / Linux | `~/.monday-task-bridge/dist/extension` |
+
+4. Pin **Monday Task Bridge** to the toolbar so its popup is one click away.
+
+### 3. Pair the extension with the bridge
+
+1. Open the extension popup and tap the **power button**. The popup shows a 6-digit code.
+2. Type that code into the installer terminal and press Enter.
+3. The popup says **Connected**. The installer finishes with **Done**.
+
+The code expires after two minutes. If it expires, tap the power button again for a new code.
+
+### 4. Restart your agent and try it
+
+Restart any Claude Code, Codex, or agy session that was already open, so it loads the new tools. Check that the server is there:
+
+```powershell
+claude mcp list    # or: codex mcp list / agy mcp list
+```
+
+`monday-task-bridge` must be in the list (Claude Code shows `✔ Connected`). Then ask your agent, for example:
+
+> Read this monday task: https://your-team.monday.com/boards/123/pulses/456
+
+> List the monday tasks assigned to me.
+
+Chrome must be running, with the extension's power button on, whenever an agent reads monday.
+
+## Update, pair again, uninstall
+
+**Update:** run the install command again. Then click **Reload** on the Monday Task Bridge card in `chrome://extensions`.
+
+**Pair again** (after **Unpair**, a new Chrome profile, or an expired code): run the install command again; it asks for a new code whenever the extension is not connected. To pair without reinstalling, run the pair helper with the code from the popup:
+
+```powershell
+node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\pair-cli.js" 123456
+```
+
+```sh
+node ~/.monday-task-bridge/dist/bridge/pair-cli.js 123456
+```
+
+The popup also shows `npm run pair -- <code>`. That command works only inside the install folder.
+
+**Another Claude Code profile:** Claude Code keeps its settings per profile. Point `CLAUDE_CONFIG_DIR` at the other profile and run the installer again:
+
+```powershell
+$env:CLAUDE_CONFIG_DIR = "$HOME\.claude-profiles\other-profile"
+irm https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/main/scripts/install.ps1 | iex
+```
+
+**Uninstall:**
+
+1. Remove the MCP server from each agent CLI:
+
+   ```powershell
+   claude mcp remove -s user monday-task-bridge
+   codex mcp remove monday-task-bridge
+   agy mcp remove monday-task-bridge
+   ```
+
+2. Click **Remove** on the extension card in `chrome://extensions`.
+3. Delete the install folder: `%LOCALAPPDATA%\Programs\monday-task-bridge` on Windows, `~/.monday-task-bridge` on macOS/Linux.
+4. Delete the data folder (see [Local data and privacy](#local-data-and-privacy)).
+5. Restart the PC to stop a bridge that is still running.
+
+### Installer options
+
+Set these environment variables before you run the installer:
 
 | Variable | Effect |
 | --- | --- |
 | `MONDAY_BRIDGE_HOME` | Install into another folder. |
-| `MONDAY_BRIDGE_CLIENTS` | Agent CLIs to register, comma-separated (default `claude,codex,agy`; `none` registers none). |
-| `CLAUDE_CONFIG_DIR` | The Claude Code profile to register with; run the installer once per profile. |
+| `MONDAY_BRIDGE_CLIENTS` | Agent CLIs to register, comma-separated. The default is `claude,codex,agy`; `none` registers none. |
+| `CLAUDE_CONFIG_DIR` | The Claude Code profile to register with. |
 
-To pair later, open the popup, tap the power button, and run `node <install folder>/dist/bridge/pair-cli.js <code>`.
+## What your agent can do
 
-## Set up from source
+| MCP tool | Result |
+| --- | --- |
+| `monday_read_task` | A fresh read of any task, by `url` or by `boardId` + `itemId` (optional `accountHost`). You do not need to open the task. |
+| `monday_read_open_task` | A fresh read of the task open in your active Chrome tab, or in the first open task tab. |
+| `monday_list_assigned_tasks` | A live list of the tasks assigned to you (any people column), with board, link, and columns. Optional `boardIds` reads only those boards. It checks up to 100 active boards and 5000 tasks (items and subitems) within 160 seconds. `complete` is false, and `warnings` say why, when a limit or an unreadable board cut the list. Not cached. |
+| `monday_list_boards` | The active boards you can be assigned on, with their workspace, to use as `boardIds` above. |
+| `monday_get_image` | The original PNG, JPEG, GIF, or WebP bytes of an attachment whose status is `ready`. |
+| `monday_get_task` | The latest cached snapshot, optionally filtered by `boardId` and/or `itemId`. |
+| `monday_list_tasks` | Summaries of the cached snapshots. |
+| `monday_bridge_status` | Bridge health, pairing, and extension connection state. |
 
-From the repository root:
+A typical agent flow is: call `monday_read_task` with the task link, read `complete` and `warnings`, then call `monday_get_image` for each attachment it needs to see.
 
-```powershell
-npm ci
-npm run build
-npm run bridge
-```
+The tools only read. The one exception is `monday_write_back`, which adds an update to an item and can set its Status. Agents never see this tool unless their MCP client starts the server with `MONDAY_BRIDGE_ALLOW_WRITE=1`. The installer does not set it.
 
-Leave the bridge terminal running while you pair; afterwards you can close it, because the MCP server starts the bridge on its own. In Chrome, open `chrome://extensions`, enable **Developer mode**, select **Load unpacked**, and choose this repository's `dist/extension` directory. Open the extension popup. It checks that the bridge is running; tap the power button to pair. The popup shows a six-digit code and the exact command, each with a copy button. In a second terminal, run that command with your code, for example:
+## The extension popup
 
-```powershell
-npm run pair -- 123456
-```
-
-The code expires after two minutes; the popup shows a countdown. Once the popup says **Connected**, you are done: agents can read any task your account can see, by link. The power button turns the connection on and off; while off, reads report `BROWSER_OFFLINE`. After a new build, click **Reload** on the extension card in `chrome://extensions`.
-
-The toolbar icon is in color while connected and grey otherwise. A badge flags anything that needs attention:
+The **power button** turns the connection on and off. While it is off, reads fail with `BROWSER_OFFLINE`. The toolbar icon is in color while connected and grey otherwise. A badge flags anything that needs attention:
 
 | Badge | Meaning |
 | --- | --- |
 | `…` (violet) | Reading a task, or waiting for pairing approval. |
-| `!` (red) | Connection is on, but the bridge is offline or not connected. |
+| `!` (red) | The connection is on, but the bridge is offline or not connected. |
 | `!` (amber) | The last read is incomplete. Open the popup to read its warnings. |
 | `+` (amber) | An image host needs permission. |
 | none | Connected (color icon), or turned off or not paired (grey icon). |
 
-Check the bridge without exposing a token:
+## How it works
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:3457/health
-```
+1. An agent calls an MCP tool. The MCP server (started by the agent CLI) passes the request to the bridge, and starts the bridge in the background if it is not running.
+2. The bridge sends the request to the paired extension over a local WebSocket.
+3. The extension calls **monday's own web API** (`https://<account>.monday.com/v2`, GraphQL): the same endpoint monday's web app uses, with your browser session and the app's CSRF token. One request returns the task name, every column as text, the updates with replies and authors, and the attached files. No tab opens.
+4. Original images are downloaded from monday's file storage and checked byte by byte. Files that are not images are listed in an `Other files` field.
+5. The snapshot goes back to the bridge, which caches it and returns it to the agent.
 
-In a macOS/Linux shell, use `curl http://127.0.0.1:3457/health`.
+The extension never crawls boards, reads or exports cookie values, or replaces original images with screenshots. It can only see the tasks your monday account can see.
 
-`paired: true` means the server has issued an extension token; `extensionConnected: true` means an authenticated extension is currently connected. Both must be true for a live read.
+## Local data and privacy
 
-## Connect an MCP client
+The bridge listens on loopback only and rejects web pages. Pairing needs the 6-digit code to be approved on your PC. After that, the extension must send a bearer token from its own extension origin, and the MCP server uses a separate local admin token. **Unpair** in the popup revokes the extension token. Each new pairing issues a fresh token, so an old token stops working.
 
-The bridge and the MCP server are **separate processes**. The MCP client starts the stdio server, and the MCP server starts the bridge in the background whenever it is not running (its log goes to `bridge.log` in the data directory), so you do not need to keep `npm run bridge` open once paired. The installer registers it for you; to register it by hand, run this from the repository root:
+The CSRF token monday puts in its app page stays in the extension's memory and is never sent to the bridge. The extension has host access to `*.monday.com` and to monday's file storage (`files-monday-com.s3.amazonaws.com`) for original images.
 
-```powershell
-$bridgeMcp = (Resolve-Path .\dist\bridge\mcp.js).Path
+Snapshots, images, and tokens are stored **unencrypted** in your user profile:
 
-# Claude Code (user scope: available in every project)
-claude mcp add -s user monday-task-bridge -- node $bridgeMcp
-
-# Codex
-codex mcp add monday-task-bridge -- node $bridgeMcp
-
-# Antigravity CLI (agy)
-agy mcp add monday-task-bridge node $bridgeMcp
-```
-
-Check with `claude mcp list`, `codex mcp list`, or `agy mcp list`. For another stdio MCP client, set `command` to `node` and `args` to the absolute path of `dist/bridge/mcp.js`. The MCP process reads the local admin token from the same data directory as the bridge; no token belongs in client configuration. `npm run mcp` is available for development from this checkout.
-
-| MCP tool | Result |
-| --- | --- |
-| `monday_bridge_status` | Bridge health, pairing, and extension connection state. |
-| `monday_read_task` | Fresh snapshot of any task by `url`, or by `boardId` + `itemId` (optional `accountHost`, defaulting to the host of the latest cached task). You do not need to open the task. |
-| `monday_read_open_task` | Fresh snapshot of the task open in the active tab, or the first open task tab if another tab is active. |
-| `monday_list_assigned_tasks` | Live list of tasks assigned to you (any people column), with board, link and column texts (optional `accountHost`, defaulting to the host of an open monday tab, then of the latest cached task). Checks up to 100 active boards and 5000 tasks (items and subitems) within 160 seconds; `complete` is false and `warnings` explain when a cap or an unreadable board cut the list. Not cached. |
-| `monday_get_task` | Latest cached snapshot, optionally filtered by `boardId` and/or `itemId`. |
-| `monday_get_image` | Original PNG, JPEG, GIF, or WebP bytes for a ready attachment ID. |
-| `monday_list_tasks` | Summaries of locally cached snapshots. |
-
-Typical agent flow: call `monday_bridge_status`, then `monday_read_task` with the task link, inspect `complete` and `warnings`, and call `monday_get_image` only for an attachment whose status is `ready`. A missing original returns an explicit error.
-
-## Local data and trust boundary
-
-The receiver listens on loopback only. Browser web origins are rejected. A six-digit pairing code needs local CLI approval; afterwards extension requests require a bearer token and the paired extension origin. The MCP server uses a separate local admin token. **Unpair** in the popup revokes the extension token on the bridge and forgets the paired extension. Each new pairing issues a fresh token, so a token from an earlier pairing stops working, including one left behind by an unpair while the bridge was offline.
-
-To call monday's web API, the extension reads the CSRF token monday embeds in its app page and sends it with your session cookie, exactly as monday's web app does. The token is kept in the extension's memory only; it is never sent to the bridge. The extension has host access to `*.monday.com` and to monday's file storage (`files-monday-com.s3.amazonaws.com`) for original images.
-
-Snapshots, image bytes, and tokens are stored **unencrypted** under the current OS user's profile:
-
-| OS | Default data directory |
+| OS | Data folder |
 | --- | --- |
 | Windows | `%LOCALAPPDATA%\monday-task-bridge` |
 | macOS | `~/Library/Application Support/monday-task-bridge` |
 | Linux | `$XDG_DATA_HOME/monday-task-bridge`, or `~/.local/share/monday-task-bridge` |
 
-`MONDAY_BRIDGE_DATA_DIR` can override the directory for the bridge, pairing CLI, and MCP process; all three must use the same value. On each new snapshot, the store prunes toward **200 snapshots / 7 days** and deletes image files no longer referenced by retained snapshots. Old files are not pruned while no new reads occur. Protect access to your OS account and never commit the data directory or token files.
+The bridge log is `bridge.log` in that folder. `MONDAY_BRIDGE_DATA_DIR` moves the folder; the bridge, the pair helper, and the MCP server must then all use the same value. Each new snapshot prunes the cache toward **200 snapshots / 7 days** and deletes images that no kept snapshot uses. Never commit or share this folder.
 
-## Limits and troubleshooting
+## Troubleshooting
 
-- **`BROWSER_OFFLINE` or `extensionConnected: false`:** Start the bridge, check that the popup's power button is on, and use **Retry connection** if needed. Chrome must be running.
+### Installing and connecting the agent
+
+- **`claude mcp list` shows `monday-task-bridge` as failed, or the agent reports `Cannot find module '...\dist\bridge\mcp.js'`:** The registered path is wrong, or the code was not built there. This often comes from a manual setup with a relative path, a PowerShell variable used in another shell, or backslashes typed in Git Bash. Run the install command again; it builds the code and registers the full path. If the old entry still shows, remove it with `claude mcp remove monday-task-bridge` from the folder where you added it, then run the installer again.
+- **`Cannot find package '@modelcontextprotocol/sdk'` (or `ws`, `zod`):** The dependencies are missing, for example because only `dist` was copied to this PC. Run the install command again.
+- **`irm` fails with "Could not create SSL/TLS secure channel" (older Windows 10):** Run `[Net.ServicePointManager]::SecurityProtocol = 'Tls12'` in the same window, then the install command again.
+- **`npm.ps1 cannot be loaded because running scripts is disabled`:** PowerShell blocks npm's script shim. Use `npm.cmd` instead of `npm`. The installer already does.
+- **"is not empty and is not a git checkout":** The install folder holds other files. Delete it, or set `MONDAY_BRIDGE_HOME` to another folder.
+- **The agent does not list the monday tools:** Restart the agent session after installing.
+
+### Reading tasks
+
+- **`BROWSER_OFFLINE` or `extensionConnected: false`:** Chrome must be running, and the popup's power button must be on. Use **Retry connection** in the popup if needed.
 - **"Not signed in to `<account>`.monday.com":** Sign in to monday in the Chrome profile that has the extension, then retry.
 - **"monday API: …":** monday rejected the request; the message is monday's. A task you cannot see in monday returns "monday has no task … that this account can see".
 - **`CAPTURE_TIMEOUT`:** A read did not finish within 180 seconds. Check the popup error and retry.
-- **`NO_SNAPSHOT`:** No cached task matches the requested IDs, or the MCP process could not obtain a read. Check `monday_bridge_status` first.
-- **`INVALID_TARGET`:** The URL is not a `https://<account>.monday.com/boards/<id>/pulses/<id>` task link, or no account host is known for a board and item ID or for `monday_list_assigned_tasks` (pass `accountHost` or open monday in Chrome).
-- **No task tab found:** Call `monday_read_task` with the task URL instead of `monday_read_open_task`.
-- **Image unavailable:** Only PNG, JPEG, GIF, and WebP originals are accepted after byte-level validation; other files are listed in the `Other files` field. Images over **25 MB each** or **75 MB per read** are not returned. If an image is stored outside monday's usual file storage, the popup asks to allow that host once; grant it only if you recognize the host.
-- **More than 100 updates:** Only the latest 100 are read, and the snapshot says so in `warnings`.
-- **Pairing fails or expires:** Tap the power button again and approve the new code within two minutes. Pairing a different extension ID replaces the previous pairing; the old extension must pair again to reconnect.
-- **Popup says the bridge no longer accepts this browser:** Another pairing replaced this one, or the bridge is using a different data directory. Pair again.
+- **`NO_SNAPSHOT`:** No cached task matches the IDs, or the read failed. Call `monday_bridge_status` first.
+- **`INVALID_TARGET`:** The URL is not a `https://<account>.monday.com/boards/<id>/pulses/<id>` task link, or no account is known for a board and item ID. Pass `accountHost`, or open monday in Chrome.
+- **No task tab found:** Use `monday_read_task` with the task link instead of `monday_read_open_task`.
+- **Image unavailable:** Only PNG, JPEG, GIF, and WebP originals are returned; other files are listed in `Other files`. Images over **25 MB each** or **75 MB per read** are skipped. If an image is stored outside monday's usual file storage, the popup asks to allow that host once. Allow it only if you recognize the host.
+- **More than 100 updates:** Only the latest 100 are read, and `warnings` says so.
+- **Pairing fails or expires:** Tap the power button again and enter the new code within two minutes. Pairing another extension (in another Chrome profile, or loaded from another folder) replaces the previous pairing.
+- **The popup says the bridge no longer accepts this browser:** Another pairing replaced this one, or the bridge uses another data folder. Pair again.
 
-When reporting a failure, include the task URL shape, popup error, and snapshot warnings. Do not include session cookies, bridge tokens, or private task content in a public issue.
+To check the bridge without exposing a token, run `Invoke-RestMethod http://127.0.0.1:3457/health` (macOS/Linux: `curl http://127.0.0.1:3457/health`). `paired: true` means an extension is paired; `extensionConnected: true` means it is connected now. A live read needs both.
+
+When you report a problem, include the task URL shape, the popup error, and the snapshot warnings. Do not post session cookies, bridge tokens, or private task content in a public issue.
+
+## Manual setup (from source)
+
+Use this for development, or if you cannot run the installer.
+
+```powershell
+git clone https://github.com/nathanpixodeo/monday-task-bridge.git
+cd monday-task-bridge
+npm ci
+npm run build
+node dist/bridge/start-cli.js
+```
+
+`start-cli.js` starts the bridge in the background (`npm run bridge` runs it in the foreground instead). Load `dist/extension` in Chrome as in step 2 of the quick start. Then tap the power button and approve the code from this folder with `npm run pair -- 123456`.
+
+Register the MCP server with the **full path** of `dist/bridge/mcp.js`. The path must exist, so build first. Replace `C:\path\to\monday-task-bridge` with your folder:
+
+```powershell
+claude mcp add -s user monday-task-bridge -- node "C:\path\to\monday-task-bridge\dist\bridge\mcp.js"
+codex mcp add monday-task-bridge -- node "C:\path\to\monday-task-bridge\dist\bridge\mcp.js"
+agy mcp add monday-task-bridge node "C:\path\to\monday-task-bridge\dist\bridge\mcp.js"
+```
+
+- Keep `-s user` for Claude Code. Without it, the server is registered for the current folder only.
+- In Git Bash, write the path with forward slashes (`C:/path/to/...`). Bash removes unquoted backslashes.
+- For any other MCP client, use a stdio server with `command` set to `node` and `args` set to the full path:
+
+  ```json
+  {
+    "mcpServers": {
+      "monday-task-bridge": {
+        "command": "node",
+        "args": ["C:/path/to/monday-task-bridge/dist/bridge/mcp.js"]
+      }
+    }
+  }
+  ```
+
+No token goes into the client configuration: the MCP server reads its admin token from the data folder.
 
 ## Development
 
@@ -161,4 +262,6 @@ npm test
 npm run build
 ```
 
-The Chrome extension lives in `extension/` (the API mapping is in `extension/helpers/monday-api.ts`), the local HTTP/WebSocket receiver and MCP server in `bridge/`, and shared payload types in `shared/`. CI runs install, typecheck, tests, and build on Node.js 24. Generated files in `dist/` are intentionally not committed.
+The Chrome extension is in `extension/` (the API mapping is in `extension/helpers/monday-api.ts`), the bridge, MCP server, and CLIs are in `bridge/`, shared payload types are in `shared/`, and the installers are in `scripts/`. `npm run mcp` runs the MCP server from source. CI runs install, typecheck, tests, and build on Node.js 24. The build output in `dist/` is not committed.
+
+The extension always uses port `3457`; keep that port free. It does not follow a custom `MONDAY_BRIDGE_PORT` value.
