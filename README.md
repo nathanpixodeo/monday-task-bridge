@@ -1,5 +1,7 @@
 # Monday Task Bridge
 
+English · [Français](README.fr.md) · [Tiếng Việt](README.vi.md)
+
 Author: **Nhat Nguyen** · Developed by **Nexkit** · [nathanpixodeo@gmail.com](mailto:nathanpixodeo@gmail.com)
 
 Let an AI agent (Claude Code, Codex, agy, or any MCP client) read monday.com tasks, with their updates and original images, through **your signed-in Chrome**. You need no monday API token, no admin-installed app, and no monday MCP plan: sign in to monday in Chrome once, and the extension does the rest.
