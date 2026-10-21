@@ -23,7 +23,8 @@
     "test": "tsx --test tests/*.test.ts",
     "bridge": "tsx bridge/server.ts",
     "mcp": "tsx bridge/mcp.ts",
-    "pair": "tsx bridge/pair-cli.ts"
+    "pair": "tsx bridge/pair-cli.ts",
+    "approval": "tsx bridge/approval-cli.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

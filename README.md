@@ -39,6 +39,7 @@ The installer:
 
 - downloads the code and builds it,
 - registers the MCP server with every agent CLI it finds (Claude Code, Codex, agy); you do not run any `mcp add` command yourself,
+- lets those CLIs read monday without asking you each time ([approval mode](#approval-mode-auto-or-manual) `auto`),
 - starts the bridge,
 - opens `chrome://extensions` and waits for you to load the extension and pair it (steps 2 and 3).
 
@@ -129,7 +130,41 @@ Set these environment variables before you run the installer:
 | --- | --- |
 | `MONDAY_BRIDGE_HOME` | Install into another folder. |
 | `MONDAY_BRIDGE_CLIENTS` | Agent CLIs to register, comma-separated. The default is `claude,codex,agy`; `none` registers none. |
+| `MONDAY_BRIDGE_APPROVAL` | `auto` (default) or `manual`; see [Approval mode](#approval-mode-auto-or-manual). |
 | `CLAUDE_CONFIG_DIR` | The Claude Code profile to register with. |
+
+## Approval mode: auto or manual
+
+By default, an agent CLI asks you to approve every MCP tool call, so each monday read stops at a yes/no prompt. The approval mode decides this for the bridge's tools in Claude Code, Codex, and agy at once:
+
+- **`auto`**: the agent reads tasks, boards, and images without asking. The installer sets this mode.
+- **`manual`**: the agent asks before each read, as the CLIs do by default.
+
+Switch at any time, then restart open agent sessions:
+
+```powershell
+# Windows
+node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" auto
+node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" manual
+node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" status
+```
+
+```sh
+# macOS / Linux
+node ~/.monday-task-bridge/dist/bridge/approval-cli.js auto
+```
+
+From a source checkout, `npm run approval -- auto` does the same.
+
+`auto` covers the read tools only. `monday_write_back` always asks. The command writes these rules, and `manual` removes them again:
+
+| CLI | File | Rule for each read tool |
+| --- | --- | --- |
+| Claude Code | `settings.json` in the profile folder (`~/.claude`, or `CLAUDE_CONFIG_DIR`) | `permissions.allow`: `mcp__monday-task-bridge__monday_read_task` |
+| Codex | `config.toml` in `~/.codex` (or `CODEX_HOME`) | `[mcp_servers.monday-task-bridge.tools.monday_read_task]` with `approval_mode = "approve"` |
+| agy | `~/.gemini/antigravity-cli/settings.json` | `permissions.allow`: `mcp(monday-task-bridge/monday_read_task)` |
+
+`MONDAY_BRIDGE_CLIENTS` limits the CLIs the command changes. For another Claude Code profile, set `CLAUDE_CONFIG_DIR` first, as for the installer.
 
 ## What your agent can do
 
@@ -196,6 +231,7 @@ The bridge log is `bridge.log` in that folder. `MONDAY_BRIDGE_DATA_DIR` moves th
 - **`npm.ps1 cannot be loaded because running scripts is disabled`:** PowerShell blocks npm's script shim. Use `npm.cmd` instead of `npm`. The installer already does.
 - **"is not empty and is not a git checkout":** The install folder holds other files. Delete it, or set `MONDAY_BRIDGE_HOME` to another folder.
 - **The agent does not list the monday tools:** Restart the agent session after installing.
+- **The agent still asks before each monday read:** Run the approval command with `status`; it must say `auto` for that CLI. Then restart the agent session. In Codex, re-registering the server with `codex mcp remove` and `codex mcp add` drops the rules; run `auto` again.
 
 ### Reading tasks
 

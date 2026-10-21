@@ -7,6 +7,7 @@
 # Run it again to update. Optional environment variables:
 #   MONDAY_BRIDGE_HOME     install folder (default: %LOCALAPPDATA%\Programs\monday-task-bridge)
 #   MONDAY_BRIDGE_CLIENTS  agent CLIs to register, comma-separated (default: claude,codex,agy; "none" registers none)
+#   MONDAY_BRIDGE_APPROVAL auto (default: agents read monday without asking each time) or manual (they ask)
 
 & {
   $ErrorActionPreference = 'Stop'
@@ -112,6 +113,14 @@
         }
       }
       Write-Host "  ${client}: registered" -ForegroundColor Green
+    }
+
+    $approval = 'auto'
+    if ($env:MONDAY_BRIDGE_APPROVAL) { $approval = $env:MONDAY_BRIDGE_APPROVAL }
+    Write-Step "Approval mode: $approval"
+    & $node (Join-Path $dir 'dist\bridge\approval-cli.js') $approval
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host '  The approval mode was not applied everywhere (see above). The agents will ask before each read.' -ForegroundColor Yellow
     }
 
     Write-Step 'Starting the bridge'

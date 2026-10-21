@@ -8,6 +8,7 @@
 # Run it again to update. Optional environment variables:
 #   MONDAY_BRIDGE_HOME     install folder (default: ~/.monday-task-bridge)
 #   MONDAY_BRIDGE_CLIENTS  agent CLIs to register, comma-separated (default: claude,codex,agy; "none" registers none)
+#   MONDAY_BRIDGE_APPROVAL auto (default: agents read monday without asking each time) or manual (they ask)
 
 set -euo pipefail
 
@@ -76,6 +77,11 @@ for client in claude codex agy; do
   esac
   printf '  \033[32m%s: registered\033[0m\n' "$client"
 done
+
+approval=${MONDAY_BRIDGE_APPROVAL:-auto}
+step "Approval mode: $approval"
+node "$dir/dist/bridge/approval-cli.js" "$approval" ||
+  printf '  \033[33mThe approval mode was not applied everywhere (see above). The agents will ask before each read.\033[0m\n'
 
 step 'Starting the bridge'
 node "$dir/dist/bridge/start-cli.js"
