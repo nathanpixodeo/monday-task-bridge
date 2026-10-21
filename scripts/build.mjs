@@ -15,7 +15,7 @@ await mkdir(bridgeOut, { recursive: true })
 await mkdir(extensionOut, { recursive: true })
 
 await build({
-  entryPoints: ['bridge/server.ts', 'bridge/mcp.ts', 'bridge/pair-cli.ts', 'bridge/start-cli.ts', 'bridge/approval-cli.ts'],
+  entryPoints: ['bridge/server.ts', 'bridge/mcp.ts', 'bridge/pair-cli.ts', 'bridge/start-cli.ts', 'bridge/approval-cli.ts', 'bridge/cli.ts'],
   outdir: bridgeOut,
   bundle: true,
   packages: 'external',
@@ -24,7 +24,9 @@ await build({
   target: 'node20',
   sourcemap: true,
   absWorkingDir: root,
-  define: { __BRIDGE_BUILD__: JSON.stringify(buildId) }
+  define: { __BRIDGE_BUILD__: JSON.stringify(buildId) },
+  // cli.js is the global monday-bridge command; the line lets macOS/Linux run it directly.
+  banner: { js: '#!/usr/bin/env node' }
 })
 
 await build({

@@ -42,6 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/ma
 L'installeur :
 
 - télécharge le code et le compile,
+- installe la [commande `monday-bridge`](#la-commande-monday-bridge), qui fonctionne depuis n'importe quel dossier,
 - enregistre le serveur MCP auprès de chaque CLI d'agent qu'il trouve (Claude Code, Codex, agy) ; vous n'avez aucune commande `mcp add` à lancer vous-même,
 - autorise ces CLI à lire monday sans vous demander à chaque fois ([mode d'approbation](#mode-dapprobation--auto-ou-manuel) `auto`),
 - démarre le bridge,
@@ -88,21 +89,33 @@ claude mcp list    # ou : codex mcp list / agy mcp list
 
 Chrome doit être lancé, avec le power button de l'extension activé, chaque fois qu'un agent lit monday.
 
+## La commande monday-bridge
+
+L'installeur ajoute une commande `monday-bridge` au dossier global de npm, comme les commandes `claude`, `codex` et `agy`. Lancez-la depuis n'importe quel dossier, dans n'importe quel terminal :
+
+| Commande | Ce qu'elle fait |
+| --- | --- |
+| `monday-bridge status` | Indique si le bridge tourne, s'il est appairé et si l'extension est connectée, ainsi que les dossiers d'installation, de l'extension et de données. |
+| `monday-bridge start` | Démarre le bridge en arrière-plan. Vous en avez rarement besoin : les agents démarrent le bridge d'eux-mêmes. |
+| `monday-bridge stop` | Arrête le bridge. Le prochain appel d'un agent le redémarre. |
+| `monday-bridge run` | Lance le bridge dans la fenêtre courante, avec son journal à l'écran. Ctrl+C l'arrête. |
+| `monday-bridge pair 123456` | Approuve le code à 6 chiffres affiché dans la popup de l'extension. |
+| `monday-bridge approval auto` | Permet aux agents de lire monday sans demande de confirmation oui/non à chaque fois. `manual` les fait demander de nouveau ; `status` affiche le mode. Voir [Mode d'approbation](#mode-dapprobation--auto-ou-manuel). |
+| `monday-bridge help` | Liste les commandes. |
+
+La commande est un lien vers le dossier d'installation : les mises à jour ne demandent donc aucune réinstallation.
+
 ## Mettre à jour, appairer à nouveau, désinstaller
 
 **Mettre à jour :** relancez la commande d'installation. Cliquez ensuite sur **Actualiser** (Reload) sur la carte Monday Task Bridge dans `chrome://extensions`.
 
-**Appairer à nouveau** (après **Unpair**, un nouveau profil Chrome ou un code expiré) : relancez la commande d'installation ; elle demande un nouveau code chaque fois que l'extension n'est pas connectée. Pour appairer sans réinstaller, lancez l'utilitaire d'appairage (pair helper) avec le code de la popup :
+**Appairer à nouveau** (après **Unpair**, un nouveau profil Chrome ou un code expiré) : ouvrez la popup, appuyez sur le power button et approuvez le nouveau code depuis n'importe quel terminal :
 
 ```powershell
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\pair-cli.js" 123456
+monday-bridge pair 123456
 ```
 
-```sh
-node ~/.monday-task-bridge/dist/bridge/pair-cli.js 123456
-```
-
-La popup affiche aussi `npm run pair -- <code>`. Cette commande ne fonctionne que dans le dossier d'installation.
+La popup affiche cette commande avec votre code, prête à être copiée.
 
 **Un autre profil Claude Code :** Claude Code conserve ses réglages par profil. Faites pointer `CLAUDE_CONFIG_DIR` vers l'autre profil et relancez l'installeur :
 
@@ -113,21 +126,20 @@ irm https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/main/scri
 
 **Désinstaller :**
 
-1. Retirez les règles d'approbation, puis le serveur MCP, de chaque CLI d'agent :
+1. Retirez les règles d'approbation et le serveur MCP de chaque CLI d'agent, arrêtez le bridge et supprimez la commande `monday-bridge` :
 
    ```powershell
-   node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" manual
+   monday-bridge approval manual
    claude mcp remove -s user monday-task-bridge
    codex mcp remove monday-task-bridge
    agy mcp remove monday-task-bridge
+   monday-bridge stop
+   npm uninstall -g monday-task-bridge
    ```
-
-   Sous macOS/Linux, la première ligne est `node ~/.monday-task-bridge/dist/bridge/approval-cli.js manual`.
 
 2. Cliquez sur **Supprimer** (Remove) sur la carte de l'extension dans `chrome://extensions`.
 3. Supprimez le dossier d'installation : `%LOCALAPPDATA%\Programs\monday-task-bridge` sous Windows, `~/.monday-task-bridge` sous macOS/Linux.
 4. Supprimez le dossier de données (voir [Données locales et confidentialité](#données-locales-et-confidentialité)).
-5. Redémarrez le PC pour arrêter un bridge encore en cours d'exécution.
 
 ### Options de l'installeur
 
@@ -147,21 +159,13 @@ Par défaut, une CLI d'agent vous demande d'approuver chaque appel d'outil MCP :
 - **`auto`** : l'agent lit les tâches, les tableaux (boards) et les images sans demander. L'installeur active ce mode.
 - **`manual`** : l'agent demande avant chaque lecture, comme les CLI le font par défaut.
 
-Vous pouvez changer de mode à tout moment. Redémarrez ensuite les sessions d'agent ouvertes :
+Vous pouvez changer de mode à tout moment, depuis n'importe quel dossier. Redémarrez ensuite les sessions d'agent ouvertes :
 
 ```powershell
-# Windows
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" auto
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" manual
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" status
+monday-bridge approval auto      # lire sans demander
+monday-bridge approval manual    # demander avant chaque lecture
+monday-bridge approval status    # afficher le mode de chaque CLI
 ```
-
-```sh
-# macOS / Linux
-node ~/.monday-task-bridge/dist/bridge/approval-cli.js auto
-```
-
-Depuis une copie des sources (checkout), `npm run approval -- auto` fait la même chose.
 
 `auto` ne couvre que les outils de lecture. `monday_write_back` demande toujours une confirmation. La commande écrit les règles suivantes, et `manual` les retire :
 
@@ -238,7 +242,9 @@ Le journal du bridge est `bridge.log`, dans ce dossier. `MONDAY_BRIDGE_DATA_DIR`
 - **`npm.ps1 cannot be loaded because running scripts is disabled` :** PowerShell bloque le script d'appel (shim) de npm. Utilisez `npm.cmd` au lieu de `npm`. L'installeur le fait déjà.
 - **"is not empty and is not a git checkout" :** le dossier d'installation contient d'autres fichiers. Supprimez-le, ou définissez `MONDAY_BRIDGE_HOME` sur un autre dossier.
 - **L'agent ne liste pas les outils monday :** redémarrez la session de l'agent après l'installation.
-- **L'agent demande encore une confirmation avant chaque lecture monday :** lancez la commande d'approbation avec `status` ; elle doit indiquer `auto` pour cette CLI. Redémarrez ensuite la session de l'agent. Dans Codex, réenregistrer le serveur avec `codex mcp remove` puis `codex mcp add` supprime les règles ; relancez `auto`.
+- **`monday-bridge` is not recognized / command not found (commande non reconnue ou introuvable) :** relancez la commande d'installation. Si l'erreur persiste, vérifiez que le dossier affiché par `npm config get prefix` (sous macOS/Linux, son sous-dossier `bin`) figure dans votre PATH, puis ouvrez un nouveau terminal.
+- **`monday-bridge.ps1 cannot be loaded because running scripts is disabled` (l'exécution des scripts est désactivée) :** PowerShell bloque les scripts d'appel (shims) de npm. Lancez une fois `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, ou tapez `monday-bridge.cmd` au lieu de `monday-bridge`.
+- **L'agent demande encore une confirmation avant chaque lecture monday :** lancez `monday-bridge approval status` ; la commande doit indiquer `auto` pour cette CLI. Redémarrez ensuite la session de l'agent. Dans Codex, réenregistrer le serveur avec `codex mcp remove` puis `codex mcp add` supprime les règles ; relancez `auto`.
 
 ### Lire les tâches
 
@@ -254,7 +260,7 @@ Le journal du bridge est `bridge.log`, dans ce dossier. `MONDAY_BRIDGE_DATA_DIR`
 - **L'appairage échoue ou expire :** appuyez à nouveau sur le power button et saisissez le nouveau code dans les deux minutes. Appairer une autre extension (dans un autre profil Chrome, ou chargée depuis un autre dossier) remplace l'appairage précédent.
 - **La popup affiche "The bridge no longer accepts this browser" (le bridge n'accepte plus ce navigateur) :** un autre appairage a remplacé celui-ci, ou le bridge utilise un autre dossier de données. Appairez à nouveau.
 
-Pour vérifier le bridge sans exposer de token, lancez `Invoke-RestMethod http://127.0.0.1:3457/health` (macOS/Linux : `curl http://127.0.0.1:3457/health`). `paired: true` signifie qu'une extension est appairée ; `extensionConnected: true` signifie qu'elle est connectée en ce moment. Une lecture en direct exige les deux.
+Pour vérifier le bridge, lancez `monday-bridge status`. Cette commande n'a besoin d'aucun token et n'en affiche aucun. Une lecture en direct exige que le bridge tourne, ainsi que **Paired: yes** et **Connected: yes**.
 
 Quand vous signalez un problème, indiquez la forme de l'URL de la tâche, l'erreur de la popup et les avertissements de l'instantané. Ne publiez pas de cookies de session, de tokens du bridge ni de contenu de tâche privé dans une issue publique.
 
@@ -267,10 +273,11 @@ git clone https://github.com/nathanpixodeo/monday-task-bridge.git
 cd monday-task-bridge
 npm ci
 npm run build
-node dist/bridge/start-cli.js
+npm install -g --install-links=false .
+monday-bridge start
 ```
 
-`start-cli.js` démarre le bridge en arrière-plan (`npm run bridge` le lance plutôt au premier plan). Chargez `dist/extension` dans Chrome comme à l'étape 2 du démarrage rapide. Appuyez ensuite sur le power button et approuvez le code depuis ce dossier avec `npm run pair -- 123456`.
+`npm install -g` ajoute la commande `monday-bridge` sous forme de lien vers ce dossier. Chargez `dist/extension` dans Chrome comme à l'étape 2 du démarrage rapide. Appuyez ensuite sur le power button et approuvez le code avec `monday-bridge pair 123456`.
 
 Enregistrez le serveur MCP avec le **chemin complet** de `dist/bridge/mcp.js`. Ce chemin doit exister : compilez donc d'abord. Remplacez `C:\path\to\monday-task-bridge` par votre dossier :
 
@@ -297,7 +304,7 @@ agy mcp add monday-task-bridge node "C:\path\to\monday-task-bridge\dist\bridge\m
 
 Aucun token ne va dans la configuration du client : le serveur MCP lit son token admin dans le dossier de données.
 
-Pour lire sans demande de confirmation oui/non à chaque fois, lancez `npm run approval -- auto` depuis ce dossier après l'enregistrement (voir [Mode d'approbation](#mode-dapprobation--auto-ou-manuel)).
+Pour lire sans demande de confirmation oui/non à chaque fois, lancez `monday-bridge approval auto` après l'enregistrement (voir [Mode d'approbation](#mode-dapprobation--auto-ou-manuel)).
 
 ## Développement
 
@@ -307,6 +314,6 @@ npm test
 npm run build
 ```
 
-L'extension Chrome se trouve dans `extension/` (le mapping de l'API est dans `extension/helpers/monday-api.ts`). Le bridge, le serveur MCP et les CLI (`pair-cli`, `start-cli`, `approval-cli`) sont dans `bridge/`, les types de payload partagés dans `shared/`, et les installeurs dans `scripts/`. `npm run mcp` lance le serveur MCP depuis les sources. La CI exécute l'installation, la vérification des types, les tests et la compilation sous Node.js 24. Le résultat de compilation dans `dist/` n'est pas commité.
+L'extension Chrome se trouve dans `extension/` (le mapping de l'API est dans `extension/helpers/monday-api.ts`). Le bridge, le serveur MCP et les CLI sont dans `bridge/` (`cli.ts` est la commande `monday-bridge` ; elle lance `start-cli`, `pair-cli`, `approval-cli` et `server`), les types de payload partagés dans `shared/`, et les installeurs dans `scripts/`. `npm run bridge`, `npm run mcp`, `npm run pair` et `npm run approval` lancent les mêmes programmes depuis les sources. La CI exécute l'installation, la vérification des types, les tests et la compilation sous Node.js 24. Le résultat de compilation dans `dist/` n'est pas commité.
 
 L'extension utilise toujours le port `3457` ; gardez ce port libre. Elle ne suit pas une valeur personnalisée de `MONDAY_BRIDGE_PORT`.

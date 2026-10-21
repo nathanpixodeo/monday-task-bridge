@@ -40,6 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/ma
 The installer:
 
 - downloads the code and builds it,
+- installs the [`monday-bridge` command](#the-monday-bridge-command), which works from any folder,
 - registers the MCP server with every agent CLI it finds (Claude Code, Codex, agy); you do not run any `mcp add` command yourself,
 - lets those CLIs read monday without asking you each time ([approval mode](#approval-mode-auto-or-manual) `auto`),
 - starts the bridge,
@@ -86,21 +87,33 @@ claude mcp list    # or: codex mcp list / agy mcp list
 
 Chrome must be running, with the extension's power button on, whenever an agent reads monday.
 
+## The monday-bridge command
+
+The installer adds a `monday-bridge` command to npm's global folder, like the `claude`, `codex`, and `agy` commands. Run it from any folder, in any terminal:
+
+| Command | What it does |
+| --- | --- |
+| `monday-bridge status` | Shows whether the bridge runs, is paired, and has the extension connected, plus the install, extension, and data folders. |
+| `monday-bridge start` | Starts the bridge in the background. You rarely need it: agents start the bridge on their own. |
+| `monday-bridge stop` | Stops the bridge. The next agent call starts it again. |
+| `monday-bridge run` | Runs the bridge in the current window, with its log on screen. Ctrl+C stops it. |
+| `monday-bridge pair 123456` | Approves the 6-digit code shown in the extension popup. |
+| `monday-bridge approval auto` | Lets agents read monday without a yes/no prompt each time. `manual` makes them ask again; `status` shows the mode. See [Approval mode](#approval-mode-auto-or-manual). |
+| `monday-bridge help` | Lists the commands. |
+
+The command is a link to the install folder, so updates need no reinstall.
+
 ## Update, pair again, uninstall
 
 **Update:** run the install command again. Then click **Reload** on the Monday Task Bridge card in `chrome://extensions`.
 
-**Pair again** (after **Unpair**, a new Chrome profile, or an expired code): run the install command again; it asks for a new code whenever the extension is not connected. To pair without reinstalling, run the pair helper with the code from the popup:
+**Pair again** (after **Unpair**, a new Chrome profile, or an expired code): open the popup, tap the power button, and approve the new code from any terminal:
 
 ```powershell
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\pair-cli.js" 123456
+monday-bridge pair 123456
 ```
 
-```sh
-node ~/.monday-task-bridge/dist/bridge/pair-cli.js 123456
-```
-
-The popup also shows `npm run pair -- <code>`. That command works only inside the install folder.
+The popup shows this command with your code, ready to copy.
 
 **Another Claude Code profile:** Claude Code keeps its settings per profile. Point `CLAUDE_CONFIG_DIR` at the other profile and run the installer again:
 
@@ -111,21 +124,20 @@ irm https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/main/scri
 
 **Uninstall:**
 
-1. Remove the approval rules, then the MCP server, from each agent CLI:
+1. Remove the approval rules and the MCP server from each agent CLI, stop the bridge, and remove the `monday-bridge` command:
 
    ```powershell
-   node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" manual
+   monday-bridge approval manual
    claude mcp remove -s user monday-task-bridge
    codex mcp remove monday-task-bridge
    agy mcp remove monday-task-bridge
+   monday-bridge stop
+   npm uninstall -g monday-task-bridge
    ```
-
-   On macOS/Linux, the first line is `node ~/.monday-task-bridge/dist/bridge/approval-cli.js manual`.
 
 2. Click **Remove** on the extension card in `chrome://extensions`.
 3. Delete the install folder: `%LOCALAPPDATA%\Programs\monday-task-bridge` on Windows, `~/.monday-task-bridge` on macOS/Linux.
 4. Delete the data folder (see [Local data and privacy](#local-data-and-privacy)).
-5. Restart the PC to stop a bridge that is still running.
 
 ### Installer options
 
@@ -145,21 +157,13 @@ By default, an agent CLI asks you to approve every MCP tool call, so each monday
 - **`auto`**: the agent reads tasks, boards, and images without asking. The installer sets this mode.
 - **`manual`**: the agent asks before each read, as the CLIs do by default.
 
-Switch at any time, then restart open agent sessions:
+Switch at any time, from any folder, then restart open agent sessions:
 
 ```powershell
-# Windows
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" auto
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" manual
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" status
+monday-bridge approval auto      # read without asking
+monday-bridge approval manual    # ask before each read
+monday-bridge approval status    # show the mode of each CLI
 ```
-
-```sh
-# macOS / Linux
-node ~/.monday-task-bridge/dist/bridge/approval-cli.js auto
-```
-
-From a source checkout, `npm run approval -- auto` does the same.
 
 `auto` covers the read tools only. `monday_write_back` always asks. The command writes these rules, and `manual` removes them again:
 
@@ -236,7 +240,9 @@ The bridge log is `bridge.log` in that folder. `MONDAY_BRIDGE_DATA_DIR` moves th
 - **`npm.ps1 cannot be loaded because running scripts is disabled`:** PowerShell blocks npm's script shim. Use `npm.cmd` instead of `npm`. The installer already does.
 - **"is not empty and is not a git checkout":** The install folder holds other files. Delete it, or set `MONDAY_BRIDGE_HOME` to another folder.
 - **The agent does not list the monday tools:** Restart the agent session after installing.
-- **The agent still asks before each monday read:** Run the approval command with `status`; it must say `auto` for that CLI. Then restart the agent session. In Codex, re-registering the server with `codex mcp remove` and `codex mcp add` drops the rules; run `auto` again.
+- **`monday-bridge` is not recognized / command not found:** Run the install command again. If it still fails, check that the folder printed by `npm config get prefix` (on macOS/Linux, its `bin` subfolder) is on your PATH, then open a new terminal.
+- **`monday-bridge.ps1 cannot be loaded because running scripts is disabled`:** PowerShell blocks npm's script shims. Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or type `monday-bridge.cmd` instead of `monday-bridge`.
+- **The agent still asks before each monday read:** Run `monday-bridge approval status`; it must say `auto` for that CLI. Then restart the agent session. In Codex, re-registering the server with `codex mcp remove` and `codex mcp add` drops the rules; run `auto` again.
 
 ### Reading tasks
 
@@ -252,7 +258,7 @@ The bridge log is `bridge.log` in that folder. `MONDAY_BRIDGE_DATA_DIR` moves th
 - **Pairing fails or expires:** Tap the power button again and enter the new code within two minutes. Pairing another extension (in another Chrome profile, or loaded from another folder) replaces the previous pairing.
 - **The popup says the bridge no longer accepts this browser:** Another pairing replaced this one, or the bridge uses another data folder. Pair again.
 
-To check the bridge without exposing a token, run `Invoke-RestMethod http://127.0.0.1:3457/health` (macOS/Linux: `curl http://127.0.0.1:3457/health`). `paired: true` means an extension is paired; `extensionConnected: true` means it is connected now. A live read needs both.
+To check the bridge, run `monday-bridge status`. It needs no token and shows no token. A live read needs the bridge running, **Paired: yes**, and **Connected: yes**.
 
 When you report a problem, include the task URL shape, the popup error, and the snapshot warnings. Do not post session cookies, bridge tokens, or private task content in a public issue.
 
@@ -265,10 +271,11 @@ git clone https://github.com/nathanpixodeo/monday-task-bridge.git
 cd monday-task-bridge
 npm ci
 npm run build
-node dist/bridge/start-cli.js
+npm install -g --install-links=false .
+monday-bridge start
 ```
 
-`start-cli.js` starts the bridge in the background (`npm run bridge` runs it in the foreground instead). Load `dist/extension` in Chrome as in step 2 of the quick start. Then tap the power button and approve the code from this folder with `npm run pair -- 123456`.
+`npm install -g` adds the `monday-bridge` command as a link to this folder. Load `dist/extension` in Chrome as in step 2 of the quick start. Then tap the power button and approve the code with `monday-bridge pair 123456`.
 
 Register the MCP server with the **full path** of `dist/bridge/mcp.js`. The path must exist, so build first. Replace `C:\path\to\monday-task-bridge` with your folder:
 
@@ -295,7 +302,7 @@ agy mcp add monday-task-bridge node "C:\path\to\monday-task-bridge\dist\bridge\m
 
 No token goes into the client configuration: the MCP server reads its admin token from the data folder.
 
-To read without a yes/no prompt each time, run `npm run approval -- auto` from this folder after registering (see [Approval mode](#approval-mode-auto-or-manual)).
+To read without a yes/no prompt each time, run `monday-bridge approval auto` after registering (see [Approval mode](#approval-mode-auto-or-manual)).
 
 ## Development
 
@@ -305,6 +312,6 @@ npm test
 npm run build
 ```
 
-The Chrome extension is in `extension/` (the API mapping is in `extension/helpers/monday-api.ts`), the bridge, MCP server, and CLIs (`pair-cli`, `start-cli`, `approval-cli`) are in `bridge/`, shared payload types are in `shared/`, and the installers are in `scripts/`. `npm run mcp` runs the MCP server from source. CI runs install, typecheck, tests, and build on Node.js 24. The build output in `dist/` is not committed.
+The Chrome extension is in `extension/` (the API mapping is in `extension/helpers/monday-api.ts`), the bridge, MCP server, and CLIs are in `bridge/` (`cli.ts` is the `monday-bridge` command; it runs `start-cli`, `pair-cli`, `approval-cli`, and `server`), shared payload types are in `shared/`, and the installers are in `scripts/`. `npm run bridge`, `npm run mcp`, `npm run pair`, and `npm run approval` run the same programs from source. CI runs install, typecheck, tests, and build on Node.js 24. The build output in `dist/` is not committed.
 
 The extension always uses port `3457`; keep that port free. It does not follow a custom `MONDAY_BRIDGE_PORT` value.

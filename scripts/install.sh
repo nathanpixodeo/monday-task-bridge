@@ -52,6 +52,14 @@ fi
 step 'Installing dependencies and building'
 (cd "$dir" && npm ci --no-audit --no-fund && npm run build)
 
+step 'Installing the monday-bridge command'
+# A link to this folder in npm's global folder, which is on PATH: updates need no reinstall.
+if npm install -g --install-links=false --no-audit --no-fund "$dir"; then
+  printf '  \033[32mmonday-bridge: ready. Run "monday-bridge help" from any folder.\033[0m\n'
+else
+  printf '  \033[33mCould not install the command (a global npm folder may need sudo). Use this instead: node "%s" help\033[0m\n' "$dir/dist/bridge/cli.js"
+fi
+
 mcp="$dir/dist/bridge/mcp.js"
 clients=",$(printf %s "${MONDAY_BRIDGE_CLIENTS:-claude,codex,agy}" | tr -d ' ' | tr '[:upper:]' '[:lower:]'),"
 
@@ -114,7 +122,7 @@ else
     code=$(printf %s "$code" | tr -d '[:space:]')
     if [ -z "$code" ]; then
       echo '  To pair later, run:'
-      printf '    \033[33mnode "%s" <code>\033[0m\n' "$pair_cli"
+      printf '    \033[33mmonday-bridge pair <code>\033[0m\n'
       break
     fi
     case $code in
@@ -129,4 +137,5 @@ fi
 step 'Done'
 echo "  Installed in $dir"
 echo '  Restart open Claude Code, Codex, or agy sessions to load the monday tools.'
+echo '  From any folder: monday-bridge status | start | stop | pair <code> | approval auto|manual'
 echo '  To update, run the install command again, then click Reload on the extension card.'

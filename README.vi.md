@@ -42,6 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/ma
 Trình cài đặt (installer) sẽ:
 
 - tải mã nguồn về và build,
+- cài [lệnh `monday-bridge`](#lệnh-monday-bridge), dùng được từ bất kỳ thư mục nào,
 - đăng ký MCP server với mọi agent CLI mà nó tìm thấy (Claude Code, Codex, agy); bạn không cần tự chạy lệnh `mcp add` nào,
 - cho các CLI đó đọc monday mà không hỏi bạn mỗi lần ([chế độ duyệt (approval mode)](#chế-độ-duyệt-auto-hoặc-manual) `auto`),
 - khởi động bridge,
@@ -88,21 +89,33 @@ claude mcp list    # hoặc: codex mcp list / agy mcp list
 
 Mỗi khi agent đọc monday, Chrome phải đang chạy và power button của extension phải đang bật.
 
+## Lệnh monday-bridge
+
+Trình cài đặt thêm lệnh `monday-bridge` vào thư mục global của npm, giống các lệnh `claude`, `codex` và `agy`. Bạn chạy lệnh này từ bất kỳ thư mục nào, trong bất kỳ terminal nào:
+
+| Lệnh | Tác dụng |
+| --- | --- |
+| `monday-bridge status` | Cho biết bridge có đang chạy không, đã pair chưa và extension đã kết nối chưa, kèm thư mục cài đặt, thư mục extension và thư mục dữ liệu. |
+| `monday-bridge start` | Khởi động bridge ở chế độ nền. Bạn hiếm khi cần lệnh này: agent tự khởi động bridge. |
+| `monday-bridge stop` | Dừng bridge. Lần gọi tiếp theo của agent sẽ khởi động lại bridge. |
+| `monday-bridge run` | Chạy bridge ngay trong cửa sổ hiện tại, kèm log hiện trên màn hình. Nhấn Ctrl+C để dừng. |
+| `monday-bridge pair 123456` | Duyệt mã 6 chữ số hiện trong popup của extension. |
+| `monday-bridge approval auto` | Cho agent đọc monday mà không gặp câu hỏi yes/no mỗi lần. `manual` khiến agent hỏi lại; `status` hiện chế độ đang dùng. Xem [Chế độ duyệt](#chế-độ-duyệt-auto-hoặc-manual). |
+| `monday-bridge help` | Liệt kê các lệnh. |
+
+Lệnh này là một link (liên kết) tới thư mục cài đặt, nên mỗi lần cập nhật bạn không cần cài lại lệnh.
+
 ## Cập nhật, pair lại, gỡ cài đặt
 
 **Cập nhật:** chạy lại lệnh cài đặt. Sau đó bấm **Tải lại** (Reload) trên thẻ Monday Task Bridge trong `chrome://extensions`.
 
-**Pair lại** (sau khi bấm **Unpair**, khi dùng profile Chrome mới, hoặc khi mã đã hết hạn): chạy lại lệnh cài đặt; lệnh này hỏi mã mới mỗi khi extension chưa kết nối. Để pair mà không cài lại, chạy công cụ pair (pair helper) với mã lấy từ popup:
+**Pair lại** (sau khi bấm **Unpair**, khi dùng profile Chrome mới, hoặc khi mã đã hết hạn): mở popup, bấm power button, rồi duyệt mã mới từ bất kỳ terminal nào:
 
 ```powershell
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\pair-cli.js" 123456
+monday-bridge pair 123456
 ```
 
-```sh
-node ~/.monday-task-bridge/dist/bridge/pair-cli.js 123456
-```
-
-Popup cũng hiện lệnh `npm run pair -- <code>`. Lệnh này chỉ chạy được bên trong thư mục cài đặt.
+Popup hiện sẵn lệnh này kèm mã của bạn, chỉ cần chép (copy) là dùng được.
 
 **Profile Claude Code khác:** Claude Code lưu cấu hình riêng cho từng profile. Trỏ `CLAUDE_CONFIG_DIR` tới profile kia rồi chạy lại trình cài đặt:
 
@@ -113,21 +126,20 @@ irm https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/main/scri
 
 **Gỡ cài đặt:**
 
-1. Gỡ các quy tắc duyệt, rồi gỡ MCP server, khỏi từng agent CLI:
+1. Gỡ các quy tắc duyệt và MCP server khỏi từng agent CLI, dừng bridge, rồi gỡ lệnh `monday-bridge`:
 
    ```powershell
-   node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" manual
+   monday-bridge approval manual
    claude mcp remove -s user monday-task-bridge
    codex mcp remove monday-task-bridge
    agy mcp remove monday-task-bridge
+   monday-bridge stop
+   npm uninstall -g monday-task-bridge
    ```
-
-   Trên macOS/Linux, dòng đầu tiên là `node ~/.monday-task-bridge/dist/bridge/approval-cli.js manual`.
 
 2. Bấm **Xóa** (Remove) trên thẻ extension trong `chrome://extensions`.
 3. Xóa thư mục cài đặt: `%LOCALAPPDATA%\Programs\monday-task-bridge` trên Windows, `~/.monday-task-bridge` trên macOS/Linux.
 4. Xóa thư mục dữ liệu (xem [Dữ liệu cục bộ và quyền riêng tư](#dữ-liệu-cục-bộ-và-quyền-riêng-tư)).
-5. Khởi động lại máy tính để dừng bridge nếu nó vẫn đang chạy.
 
 ### Tùy chọn của trình cài đặt
 
@@ -147,21 +159,13 @@ Mặc định, agent CLI yêu cầu bạn duyệt từng lần gọi MCP tool, n
 - **`auto`**: agent đọc task, board và ảnh mà không hỏi. Trình cài đặt đặt chế độ này.
 - **`manual`**: agent hỏi trước mỗi lần đọc, giống hành vi mặc định của các CLI.
 
-Bạn có thể chuyển chế độ bất cứ lúc nào, sau đó khởi động lại các phiên agent đang mở:
+Bạn có thể chuyển chế độ bất cứ lúc nào, từ bất kỳ thư mục nào, sau đó khởi động lại các phiên agent đang mở:
 
 ```powershell
-# Trên Windows
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" auto
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" manual
-node "$env:LOCALAPPDATA\Programs\monday-task-bridge\dist\bridge\approval-cli.js" status
+monday-bridge approval auto      # đọc mà không hỏi
+monday-bridge approval manual    # hỏi trước mỗi lần đọc
+monday-bridge approval status    # hiện chế độ của từng CLI
 ```
-
-```sh
-# Trên macOS / Linux
-node ~/.monday-task-bridge/dist/bridge/approval-cli.js auto
-```
-
-Trong bản checkout mã nguồn, `npm run approval -- auto` làm việc tương tự.
 
 `auto` chỉ áp dụng cho các tool đọc. `monday_write_back` luôn hỏi. Lệnh này ghi các quy tắc dưới đây, và `manual` gỡ chúng đi:
 
@@ -238,7 +242,9 @@ Log của bridge là tệp `bridge.log` trong thư mục đó. `MONDAY_BRIDGE_DA
 - **`npm.ps1 cannot be loaded because running scripts is disabled`:** PowerShell chặn script shim của npm. Dùng `npm.cmd` thay cho `npm`. Trình cài đặt đã làm sẵn việc này.
 - **"is not empty and is not a git checkout":** Thư mục cài đặt đang chứa tệp khác. Xóa thư mục đó, hoặc đặt `MONDAY_BRIDGE_HOME` thành một thư mục khác.
 - **Agent không liệt kê các tool monday:** Khởi động lại phiên agent sau khi cài đặt.
-- **Agent vẫn hỏi trước mỗi lần đọc monday:** Chạy lệnh chế độ duyệt với `status`; kết quả phải là `auto` cho CLI đó. Sau đó khởi động lại phiên agent. Trong Codex, việc đăng ký lại server bằng `codex mcp remove` và `codex mcp add` làm mất các quy tắc; hãy chạy lại `auto`.
+- **`monday-bridge` is not recognized / command not found (không nhận ra lệnh / không tìm thấy lệnh):** Chạy lại lệnh cài đặt. Nếu vẫn lỗi, kiểm tra xem thư mục mà `npm config get prefix` in ra (trên macOS/Linux là thư mục con `bin` của nó) đã nằm trong PATH chưa, rồi mở một terminal mới.
+- **`monday-bridge.ps1 cannot be loaded because running scripts is disabled` (không tải được `monday-bridge.ps1` vì việc chạy script đang bị tắt):** PowerShell chặn các script shim của npm. Chạy `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` một lần, hoặc gõ `monday-bridge.cmd` thay cho `monday-bridge`.
+- **Agent vẫn hỏi trước mỗi lần đọc monday:** Chạy `monday-bridge approval status`; kết quả phải là `auto` cho CLI đó. Sau đó khởi động lại phiên agent. Trong Codex, việc đăng ký lại server bằng `codex mcp remove` và `codex mcp add` làm mất các quy tắc; hãy chạy lại `auto`.
 
 ### Đọc task
 
@@ -254,7 +260,7 @@ Log của bridge là tệp `bridge.log` trong thư mục đó. `MONDAY_BRIDGE_DA
 - **Pairing thất bại hoặc hết hạn:** Bấm lại power button và nhập mã mới trong vòng hai phút. Pair một extension khác (trong profile Chrome khác, hoặc được tải từ thư mục khác) sẽ thay thế pairing trước đó.
 - **Popup báo "The bridge no longer accepts this browser" (bridge không còn chấp nhận trình duyệt này):** Một pairing khác đã thay thế pairing này, hoặc bridge đang dùng thư mục dữ liệu khác. Hãy pair lại.
 
-Để kiểm tra bridge mà không làm lộ token, chạy `Invoke-RestMethod http://127.0.0.1:3457/health` (macOS/Linux: `curl http://127.0.0.1:3457/health`). `paired: true` nghĩa là đã có extension được pair; `extensionConnected: true` nghĩa là extension đang kết nối. Muốn đọc trực tiếp thì cần cả hai.
+Để kiểm tra bridge, chạy `monday-bridge status`. Lệnh này không cần token và không hiện token nào. Muốn đọc trực tiếp thì bridge phải đang chạy, kèm **Paired: yes** và **Connected: yes**.
 
 Khi báo lỗi, hãy kèm dạng URL của task, lỗi hiện trong popup và các cảnh báo của snapshot. Không đăng cookie phiên đăng nhập, token của bridge hay nội dung task riêng tư trong một issue công khai.
 
@@ -267,10 +273,11 @@ git clone https://github.com/nathanpixodeo/monday-task-bridge.git
 cd monday-task-bridge
 npm ci
 npm run build
-node dist/bridge/start-cli.js
+npm install -g --install-links=false .
+monday-bridge start
 ```
 
-`start-cli.js` khởi động bridge ở chế độ nền (còn `npm run bridge` chạy bridge ở chế độ tiền cảnh). Tải `dist/extension` vào Chrome như ở bước 2 của phần Bắt đầu nhanh. Sau đó bấm power button và duyệt mã từ thư mục này bằng `npm run pair -- 123456`.
+`npm install -g` thêm lệnh `monday-bridge` dưới dạng một link tới thư mục này. Tải `dist/extension` vào Chrome như ở bước 2 của phần Bắt đầu nhanh. Sau đó bấm power button và duyệt mã bằng `monday-bridge pair 123456`.
 
 Đăng ký MCP server với **đường dẫn đầy đủ** của `dist/bridge/mcp.js`. Đường dẫn này phải tồn tại, nên hãy build trước. Thay `C:\path\to\monday-task-bridge` bằng thư mục của bạn:
 
@@ -297,7 +304,7 @@ agy mcp add monday-task-bridge node "C:\path\to\monday-task-bridge\dist\bridge\m
 
 Không có token nào nằm trong cấu hình của client: MCP server đọc admin token của nó từ thư mục dữ liệu.
 
-Để đọc mà không gặp câu hỏi yes/no mỗi lần, chạy `npm run approval -- auto` từ thư mục này sau khi đăng ký (xem [Chế độ duyệt](#chế-độ-duyệt-auto-hoặc-manual)).
+Để đọc mà không gặp câu hỏi yes/no mỗi lần, chạy `monday-bridge approval auto` sau khi đăng ký (xem [Chế độ duyệt](#chế-độ-duyệt-auto-hoặc-manual)).
 
 ## Phát triển
 
@@ -307,6 +314,6 @@ npm test
 npm run build
 ```
 
-Chrome extension nằm trong `extension/` (phần ánh xạ API nằm trong `extension/helpers/monday-api.ts`), bridge, MCP server và các CLI (`pair-cli`, `start-cli`, `approval-cli`) nằm trong `bridge/`, các kiểu payload dùng chung nằm trong `shared/`, còn các trình cài đặt nằm trong `scripts/`. `npm run mcp` chạy MCP server từ mã nguồn. CI chạy install, typecheck, test và build trên Node.js 24. Kết quả build trong `dist/` không được commit.
+Chrome extension nằm trong `extension/` (phần ánh xạ API nằm trong `extension/helpers/monday-api.ts`), bridge, MCP server và các CLI nằm trong `bridge/` (`cli.ts` là lệnh `monday-bridge`; lệnh này chạy `start-cli`, `pair-cli`, `approval-cli` và `server`), các kiểu payload dùng chung nằm trong `shared/`, còn các trình cài đặt nằm trong `scripts/`. `npm run bridge`, `npm run mcp`, `npm run pair` và `npm run approval` chạy chính các chương trình đó từ mã nguồn. CI chạy install, typecheck, test và build trên Node.js 24. Kết quả build trong `dist/` không được commit.
 
 Extension luôn dùng port `3457`; đừng để chương trình khác chiếm port này. Extension không dùng giá trị `MONDAY_BRIDGE_PORT` tùy chỉnh.

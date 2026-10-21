@@ -86,6 +86,15 @@
       Pop-Location
     }
 
+    Write-Step 'Installing the monday-bridge command'
+    # A link to this folder in npm's global folder, which is on PATH: updates need no reinstall.
+    & $npm install -g --install-links=false --no-audit --no-fund $dir
+    if ($LASTEXITCODE -eq 0) {
+      Write-Host '  monday-bridge: ready. Run "monday-bridge help" from any folder.' -ForegroundColor Green
+    } else {
+      Write-Host "  Could not install the command. Use this instead: node `"$(Join-Path $dir 'dist\bridge\cli.js')`" help" -ForegroundColor Yellow
+    }
+
     $mcp = Join-Path $dir 'dist\bridge\mcp.js'
     $clients = 'claude,codex,agy'
     if ($env:MONDAY_BRIDGE_CLIENTS) { $clients = $env:MONDAY_BRIDGE_CLIENTS }
@@ -154,7 +163,7 @@
         $code = (Read-Host '  Enter the code here (or press Enter to pair later)').Trim()
         if (-not $code) {
           Write-Host '  To pair later, run:'
-          Write-Host "    node `"$pairCli`" <code>" -ForegroundColor Yellow
+          Write-Host '    monday-bridge pair <code>' -ForegroundColor Yellow
           break
         }
         if ($code -notmatch '^\d{6}$') {
@@ -170,6 +179,7 @@
     Write-Step 'Done'
     Write-Host "  Installed in $dir"
     Write-Host '  Restart open Claude Code, Codex, or agy sessions to load the monday tools.'
+    Write-Host '  From any folder: monday-bridge status | start | stop | pair <code> | approval auto|manual'
     Write-Host '  To update, run the install command again, then click Reload on the extension card.'
   } catch {
     Write-Host ''

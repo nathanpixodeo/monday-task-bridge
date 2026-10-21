@@ -888,7 +888,7 @@ function PairingCard({ code, expiresAt }: { code: string; expiresAt: string | nu
         </div>
       </div>
       <div className="mt-3">
-        <CommandChip command={`npm run pair -- ${code}`} />
+        <CommandChip command={`monday-bridge pair ${code}`} />
       </div>
       <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-3">
         {expired ? (
