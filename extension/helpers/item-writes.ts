@@ -36,13 +36,13 @@ const TAGS_QUERY = `query WriteTags($boardIds: [ID!]) {
   tags { id name }
 }`
 
-const CREATE_TAG = `mutation WriteCreateTag($name: String, $boardId: ID) {
+const CREATE_TAG = `mutation WriteCreateTag($name: String!, $boardId: ID) {
   create_or_get_tag(tag_name: $name, board_id: $boardId) { id name }
 }`
 
 const ME_QUERY = `query WriteMe { me { id } }`
 
-const USERS_BY_EMAIL = `query WriteUsersByEmail($emails: [String]) {
+const USERS_BY_EMAIL = `query WriteUsersByEmail($emails: [String!]) {
   users(emails: $emails) { id name email }
 }`
 
