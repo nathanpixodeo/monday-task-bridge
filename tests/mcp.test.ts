@@ -30,7 +30,7 @@ test('MCP exposes cached task and original image with no monday API token', { ti
     command: process.execPath,
     args: [resolve('node_modules/tsx/dist/cli.mjs'), 'bridge/mcp.ts'],
     cwd: process.cwd(),
-    env: { ...process.env, MONDAY_BRIDGE_DATA_DIR: dataDir, MONDAY_BRIDGE_PORT: '1' }
+    env: { ...process.env, MONDAY_BRIDGE_DATA_DIR: dataDir, MONDAY_BRIDGE_PORT: '1', MONDAY_BRIDGE_AUTOSTART: '0' }
   })
   const client = new Client({ name: 'monday-bridge-test', version: '1.0.0' })
 
@@ -79,7 +79,7 @@ test('MCP always lists the agent writes, and monday_write_back only with MONDAY_
       command: process.execPath,
       args: [resolve('node_modules/tsx/dist/cli.mjs'), 'bridge/mcp.ts'],
       cwd: process.cwd(),
-      env: { ...env, MONDAY_BRIDGE_DATA_DIR: dataDir, MONDAY_BRIDGE_PORT: '1', ...extra }
+      env: { ...env, MONDAY_BRIDGE_DATA_DIR: dataDir, MONDAY_BRIDGE_PORT: '1', MONDAY_BRIDGE_AUTOSTART: '0', ...extra }
     })
     const client = new Client({ name: 'monday-bridge-test', version: '1.0.0' })
     try {

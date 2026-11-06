@@ -156,7 +156,7 @@ test('assigned tasks are relayed from the extension to the bridge and MCP withou
       command: process.execPath,
       args: [resolve('node_modules/tsx/dist/cli.mjs'), 'bridge/mcp.ts'],
       cwd: process.cwd(),
-      env: { ...process.env, MONDAY_BRIDGE_DATA_DIR: dataDir, MONDAY_BRIDGE_PORT: String(port) }
+      env: { ...process.env, MONDAY_BRIDGE_DATA_DIR: dataDir, MONDAY_BRIDGE_PORT: String(port), MONDAY_BRIDGE_AUTOSTART: '0' }
     }))
     const tools = await client.listTools()
     assert.ok(tools.tools.some(tool => tool.name === 'monday_list_assigned_tasks'))

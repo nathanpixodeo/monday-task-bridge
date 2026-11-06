@@ -91,7 +91,7 @@ async function stop(): Promise<number> {
     return 1
   }
   for (let i = 0; i < 25 && (await health()); i++) await sleep(200)
-  console.log(`Bridge stopped (pid ${state.pid}). The next agent call starts it again.`)
+  console.log(`Bridge stopped (pid ${state.pid}). An open agent session starts it again within 15 seconds.`)
   return 0
 }
 

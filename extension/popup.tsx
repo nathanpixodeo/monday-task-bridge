@@ -8,7 +8,7 @@ import type { RecentRead } from './helpers/recent-reads'
 import './style.css'
 
 const BRIDGE_HOST = '127.0.0.1:3457'
-const BRIDGE_COMMAND = 'npm run bridge'
+const BRIDGE_COMMAND = 'monday-bridge start'
 const AUTHOR = 'Nhat Nguyen'
 const DEVELOPER = 'Nexkit'
 const CONTACT_EMAIL = 'nathanpixodeo@gmail.com'
@@ -816,7 +816,7 @@ function Hero({
     },
     off: { title: 'Disconnected', subtitle: 'Tap to connect your agents' },
     connecting: { title: 'Connecting…', subtitle: `Reaching the bridge on ${BRIDGE_HOST}` },
-    offline: { title: 'Bridge offline', subtitle: `Start it with ${BRIDGE_COMMAND}` },
+    offline: { title: 'Bridge offline', subtitle: 'Your agent starts it when its session opens' },
     connected: {
       title: 'Connected',
       subtitle: config.allowWrite ? 'Agents can read and edit your monday tasks' : 'Agents can read your monday tasks'
@@ -905,6 +905,7 @@ function BridgeCard({ health, highlight }: { health: BridgeHealth; highlight: bo
       </div>
       {health === 'down' && (
         <div className="mt-3 flex flex-col gap-2">
+          <p className="text-xs text-slate-400">Open an agent session to start it, or run:</p>
           <CommandChip command={BRIDGE_COMMAND} />
           <p className="text-xs text-slate-400">Then tap the power button to pair.</p>
         </div>
@@ -1214,6 +1215,16 @@ function Popup() {
   const [unpairing, setUnpairing] = useState(false)
   const [permissionError, setPermissionError] = useState<string | null>(null)
   const [permissionsGranted, setPermissionsGranted] = useState(false)
+  const reconnectAsked = useRef(false)
+
+  // The worker only retries every 30 seconds; opening the popup is a good moment to try at once
+  useEffect(() => {
+    if (!config || reconnectAsked.current) return
+    reconnectAsked.current = true
+    if (config.paired && config.enabled && (config.status === 'disconnected' || config.status === 'error')) {
+      void send({ type: 'reconnect' })
+    }
+  }, [config])
 
   if (!config) return null
 

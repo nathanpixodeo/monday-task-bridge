@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     }
   } catch (err: unknown) {
     process.stderr.write(`[pair-cli] ✗ Cannot connect to bridge server at ${BRIDGE_BASE}\n`)
-    process.stderr.write(`[pair-cli]   Make sure the server is running (npm run bridge)\n`)
+    process.stderr.write(`[pair-cli]   Make sure the bridge is running (monday-bridge start)\n`)
     if (err instanceof Error) {
       process.stderr.write(`[pair-cli]   ${err.message}\n`)
     }

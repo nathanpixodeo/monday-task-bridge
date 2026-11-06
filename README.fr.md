@@ -96,8 +96,8 @@ L'installeur ajoute une commande `monday-bridge` au dossier global de npm, comme
 | Commande | Ce qu'elle fait |
 | --- | --- |
 | `monday-bridge status` | Indique si le bridge tourne, s'il est appairé et si l'extension est connectée, ainsi que les dossiers d'installation, de l'extension et de données. |
-| `monday-bridge start` | Démarre le bridge en arrière-plan. Vous en avez rarement besoin : les agents démarrent le bridge d'eux-mêmes. |
-| `monday-bridge stop` | Arrête le bridge. Le prochain appel d'un agent le redémarre. |
+| `monday-bridge start` | Démarre le bridge en arrière-plan. Vous en avez rarement besoin : chaque session d'agent démarre le bridge à son ouverture. |
+| `monday-bridge stop` | Arrête le bridge. Une session d'agent ouverte le redémarre dans les 15 secondes ; sinon, la prochaine session le fait. |
 | `monday-bridge run` | Lance le bridge dans la fenêtre courante, avec son journal à l'écran. Ctrl+C l'arrête. |
 | `monday-bridge pair 123456` | Approuve le code à 6 chiffres affiché dans la popup de l'extension. |
 | `monday-bridge approval auto` | Permet aux agents de lire monday sans demande de confirmation oui/non à chaque fois. `manual` les fait demander de nouveau ; `status` affiche le mode. Voir [Mode d'approbation](#mode-dapprobation--auto-ou-manuel). |
@@ -227,11 +227,12 @@ L'interrupteur **Allow writing**, sous le power button, permet aux agents de mod
 
 ## Fonctionnement
 
-1. Un agent appelle un outil MCP. Le serveur MCP (démarré par la CLI de l'agent) transmet la requête au bridge, et démarre le bridge en arrière-plan s'il ne tourne pas.
-2. Le bridge envoie la requête à l'extension appairée via un WebSocket local.
-3. L'extension appelle **la propre API web de monday** (`https://<account>.monday.com/v2`, GraphQL) : le même endpoint que celui de l'application web de monday, avec votre session de navigateur et le token CSRF de l'application. Une seule requête renvoie le nom de la tâche, chaque colonne sous forme de texte, les mises à jour avec leurs réponses et leurs auteurs, et les fichiers joints. Aucun onglet ne s'ouvre.
-4. Les images originales sont téléchargées depuis le stockage de fichiers de monday et vérifiées octet par octet. Les fichiers qui ne sont pas des images sont listés dans un champ `Other files`.
-5. L'instantané revient au bridge, qui le met en cache et le renvoie à l'agent.
+1. À l'ouverture d'une session d'agent, son serveur MCP (démarré par la CLI de l'agent) démarre le bridge en arrière-plan s'il ne tourne pas, et vérifie toutes les 15 secondes qu'il tourne toujours. L'extension se connecte au bridge en moins de 30 secondes, ou aussitôt que vous ouvrez la popup. Un bridge qui vient de démarrer fait attendre la requête d'un agent jusqu'à 40 secondes, le temps que l'extension se connecte. Pour ne démarrer le bridge qu'au premier appel d'outil, définissez `MONDAY_BRIDGE_AUTOSTART=0` dans l'environnement du serveur MCP.
+2. Un agent appelle un outil MCP, et le serveur MCP transmet la requête au bridge.
+3. Le bridge envoie la requête à l'extension appairée via un WebSocket local.
+4. L'extension appelle **la propre API web de monday** (`https://<account>.monday.com/v2`, GraphQL) : le même endpoint que celui de l'application web de monday, avec votre session de navigateur et le token CSRF de l'application. Une seule requête renvoie le nom de la tâche, chaque colonne sous forme de texte, les mises à jour avec leurs réponses et leurs auteurs, et les fichiers joints. Aucun onglet ne s'ouvre.
+5. Les images originales sont téléchargées depuis le stockage de fichiers de monday et vérifiées octet par octet. Les fichiers qui ne sont pas des images sont listés dans un champ `Other files`.
+6. L'instantané revient au bridge, qui le met en cache et le renvoie à l'agent.
 
 L'extension ne parcourt jamais les tableaux, ne lit ni n'exporte jamais la valeur des cookies, et ne remplace jamais les images originales par des captures d'écran. Elle ne voit que les tâches que votre compte monday peut voir.
 

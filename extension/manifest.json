@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Monday Task Bridge",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Read monday.com tasks and images, and edit them when you allow it, with your signed-in session, for a local MCP bridge.",
   "author": {
     "email": "nathanpixodeo@gmail.com"

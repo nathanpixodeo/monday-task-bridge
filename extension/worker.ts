@@ -17,7 +17,7 @@ import type {
   BridgeToExtensionMessage
 } from '../shared/types'
 
-const BRIDGE_OFFLINE_MESSAGE = 'Cannot reach the bridge at 127.0.0.1:3457. Start it with: npm run bridge'
+const BRIDGE_OFFLINE_MESSAGE = 'Cannot reach the bridge at 127.0.0.1:3457. Open an agent session to start it, or run: monday-bridge start'
 
 let ws: WebSocket | null = null
 let authenticated = false
@@ -50,6 +50,32 @@ async function handlePairingTimeout() {
 }
 
 // ─── WebSocket connection ────────────────────────────────────────────
+
+/** Delays for reconnecting after a live connection drops, before the 30-second alarm takes over. */
+const QUICK_RETRY_MS = [1000, 2000, 4000, 8000, 15000]
+// Index of the next quick retry while a dropped connection is being retried; -1 when none is
+let quickRetry = -1
+let quickRetryTimer: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * After a live connection drops, as when the bridge restarts after an update, reconnect within seconds rather than at
+ * the next alarm. A connection that was never up does not start this, so a bridge that is not running is only retried
+ * by the alarm.
+ */
+function retrySoon(lostLiveConnection: boolean) {
+  if (lostLiveConnection) quickRetry = 0
+  if (quickRetry < 0 || quickRetry >= QUICK_RETRY_MS.length) {
+    quickRetry = -1
+    return
+  }
+  clearTimeout(quickRetryTimer)
+  quickRetryTimer = setTimeout(() => void connectWs(), QUICK_RETRY_MS[quickRetry++])
+}
+
+function stopQuickRetry() {
+  clearTimeout(quickRetryTimer)
+  quickRetry = -1
+}
 
 async function connectWs() {
   const config = await getConfig()
@@ -90,6 +116,7 @@ async function connectWs() {
         const msg = JSON.parse(data) as BridgeToExtensionMessage
         if (msg.type === 'hello-ack') {
           authenticated = true
+          stopQuickRetry()
           await setConfig({ status: 'authenticated', error: null, connectedAt: new Date().toISOString() })
           startHeartbeat()
         } else if (msg.type === 'capture') {
@@ -125,14 +152,17 @@ async function connectWs() {
 
     socket.onclose = (event) => {
       if (ws !== socket) return
+      const wasLive = authenticated
       authenticated = false
       stopHeartbeat()
       ws = null
       // 4003 invalid token, 4004 unpaired, 4005 pairing replaced: the token is dead for good
       if (event.code === 4003 || event.code === 4004 || event.code === 4005) {
+        stopQuickRetry()
         setConfig({ ...unpairedFields, error: 'The bridge no longer accepts this browser. Pair again.' })
       } else {
         setConfig({ status: 'disconnected', connectedAt: null })
+        retrySoon(wasLive)
       }
     }
 
@@ -150,6 +180,7 @@ async function connectWs() {
 
 /** Close the live socket without letting its handlers touch status or `ws`. */
 function disconnectWs() {
+  stopQuickRetry()
   if (ws) {
     ws.onopen = null
     ws.onmessage = null

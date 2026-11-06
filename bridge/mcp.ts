@@ -508,12 +508,43 @@ mcp.tool(
 // Main
 // ---------------------------------------------------------------------------
 
+/** How often an open agent session checks that the bridge is up. */
+const BRIDGE_WATCH_MS = 15_000
+/** The longest wait between attempts while the bridge cannot be started, for example because another program holds the port. */
+const BRIDGE_WATCH_MAX_MS = 5 * 60_000
+
+/**
+ * Starts the bridge as soon as the agent session opens, so the extension is connected by the first tool call, and
+ * starts it again if it stops while the session is open (after an update, say). MONDAY_BRIDGE_AUTOSTART=0 leaves it to
+ * the first tool call instead.
+ */
+function keepBridgeRunning(): void {
+  if (process.env.MONDAY_BRIDGE_AUTOSTART === '0') return
+  let failures = 0
+  let nextAttemptAt = 0
+  const check = async () => {
+    if (Date.now() < nextAttemptAt) return
+    try {
+      await bridgeReady()
+      failures = 0
+    } catch (err: unknown) {
+      failures++
+      nextAttemptAt = Date.now() + Math.min(BRIDGE_WATCH_MS * 2 ** failures, BRIDGE_WATCH_MAX_MS)
+      process.stderr.write(`[mcp] ${err instanceof Error ? err.message : String(err)}\n`)
+    }
+  }
+  void check()
+  // unref: the watch alone must not keep the process alive once the agent closes the session
+  setInterval(() => void check(), BRIDGE_WATCH_MS).unref()
+}
+
 async function main(): Promise<void> {
   await store.init()
   process.stderr.write('[mcp] Starting MCP stdio server...\n')
   const transport = new StdioServerTransport()
   await mcp.connect(transport)
   process.stderr.write('[mcp] MCP server connected via stdio.\n')
+  keepBridgeRunning()
 }
 
 main().catch((err) => {

@@ -270,13 +270,42 @@ function liveTarget(): LiveSocket | undefined {
 }
 
 /**
+ * How long a bridge that just started gives the extension to connect before a request fails with BROWSER_OFFLINE.
+ * Agents start the bridge when their session opens, and the extension only retries every 30 seconds, so an agent's
+ * first call would otherwise often fail.
+ */
+const EXTENSION_GRACE_MS = 40_000
+let bridgeStartedAt = Date.now()
+let extensionEverConnected = false
+const extensionWaiters = new Set<() => void>()
+
+/**
+ * Resolves once an extension is connected. It waits only while the bridge is new and no extension has connected yet;
+ * afterwards a missing extension means Chrome is closed or switched off, and the request fails at once.
+ */
+function waitForExtension(): Promise<void> {
+  const left = bridgeStartedAt + EXTENSION_GRACE_MS - Date.now()
+  if (liveTarget() || extensionEverConnected || left <= 0) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      extensionWaiters.delete(done)
+      resolve()
+    }
+    const timer = setTimeout(done, left)
+    extensionWaiters.add(done)
+  })
+}
+
+/**
  * Send a request to the connected extension and register it under a fresh request ID.
  * The promise settles when the extension answers, the socket closes, or the timeout fires.
  */
-function requestFromExtension<T>(
+async function requestFromExtension<T>(
   pending: Map<string, PendingRequest<T>>,
   message: (requestId: string) => BridgeToExtensionMessage
 ): Promise<T> {
+  await waitForExtension()
   // Find an authenticated socket
   let targetConnId: string | undefined
   let target: LiveSocket | undefined
@@ -350,11 +379,12 @@ export function rejectCapture(requestId: string, errorMsg: string): boolean {
   return pending !== undefined
 }
 
-export function requestAssignedTasks(
+export async function requestAssignedTasks(
   accountHost?: string,
   cachedHost?: string,
   choice: { boardIds?: string[]; boardsOnly?: boolean } = {}
 ): Promise<AssignedTasks> {
+  await waitForExtension()
   const target = liveTarget()
   if (target && !target.capabilities?.includes('assignedTasks')) {
     return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to enable assigned tasks'))
@@ -391,7 +421,8 @@ export function rejectAssignedTasks(requestId: string, err: Error, targetConnId?
  * Ask the extension to write to one monday item with the signed-in session: add the update, then set the status
  * label when one is given. The bridge never retries a write: the caller decides what to do with a failure.
  */
-export function requestWriteBack(request: WriteBackRequest): Promise<WriteBackResult> {
+export async function requestWriteBack(request: WriteBackRequest): Promise<WriteBackResult> {
+  await waitForExtension()
   const target = liveTarget()
   if (target && !target.capabilities?.includes('writeBack')) {
     return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to write back to monday'))
@@ -403,7 +434,8 @@ export function requestWriteBack(request: WriteBackRequest): Promise<WriteBackRe
  * Ask the extension to do one write an agent asked for. Refused here while "Allow writing" is off in the popup; the
  * extension checks the switch again before it writes. Never retried.
  */
-export function requestWrite(request: WriteRequest, cachedHost?: string): Promise<WriteResult> {
+export async function requestWrite(request: WriteRequest, cachedHost?: string): Promise<WriteResult> {
+  await waitForExtension()
   const target = liveTarget()
   if (target && !target.capabilities?.includes('write')) {
     return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to write to monday'))
@@ -1145,6 +1177,8 @@ function setupWebSocket(server: http.Server): void {
         }
         liveSockets.set(connId, liveSocket)
         wsSend(ws, { type: 'hello-ack' })
+        extensionEverConnected = true
+        for (const done of Array.from(extensionWaiters)) done()
         return
       }
 
@@ -1257,6 +1291,7 @@ function setupWebSocket(server: http.Server): void {
 // ---------------------------------------------------------------------------
 
 export async function startServer(): Promise<http.Server> {
+  bridgeStartedAt = Date.now()
   await store.init()
   // Ensure admin token exists without logging secrets
   await store.getAdminToken()

@@ -96,8 +96,8 @@ Trình cài đặt thêm lệnh `monday-bridge` vào thư mục global của npm
 | Lệnh | Tác dụng |
 | --- | --- |
 | `monday-bridge status` | Cho biết bridge có đang chạy không, đã pair chưa và extension đã kết nối chưa, kèm thư mục cài đặt, thư mục extension và thư mục dữ liệu. |
-| `monday-bridge start` | Khởi động bridge ở chế độ nền. Bạn hiếm khi cần lệnh này: agent tự khởi động bridge. |
-| `monday-bridge stop` | Dừng bridge. Lần gọi tiếp theo của agent sẽ khởi động lại bridge. |
+| `monday-bridge start` | Khởi động bridge ở chế độ nền. Bạn hiếm khi cần lệnh này: mỗi phiên agent tự khởi động bridge khi mở. |
+| `monday-bridge stop` | Dừng bridge. Phiên agent đang mở sẽ khởi động lại bridge trong vòng 15 giây; nếu không có phiên nào mở thì phiên tiếp theo sẽ làm việc này. |
 | `monday-bridge run` | Chạy bridge ngay trong cửa sổ hiện tại, kèm log hiện trên màn hình. Nhấn Ctrl+C để dừng. |
 | `monday-bridge pair 123456` | Duyệt mã 6 chữ số hiện trong popup của extension. |
 | `monday-bridge approval auto` | Cho agent đọc monday mà không gặp câu hỏi yes/no mỗi lần. `manual` khiến agent hỏi lại; `status` hiện chế độ đang dùng. Xem [Chế độ duyệt](#chế-độ-duyệt-auto-hoặc-manual). |
@@ -227,11 +227,12 @@ Công tắc **Allow writing** nằm dưới power button, cho phép agent sửa 
 
 ## Cách hoạt động
 
-1. Agent gọi một MCP tool. MCP server (do agent CLI khởi động) chuyển request tới bridge, và khởi động bridge ở chế độ nền nếu bridge chưa chạy.
-2. Bridge gửi request tới extension đã pair qua một WebSocket cục bộ.
-3. Extension gọi **web API của chính monday** (`https://<account>.monday.com/v2`, GraphQL): cùng endpoint mà web app của monday dùng, với phiên đăng nhập trình duyệt của bạn và CSRF token của app. Một request trả về tên task, mọi cột dưới dạng văn bản, các update kèm phản hồi và tác giả, cùng các tệp đính kèm. Không có tab nào được mở.
-4. Ảnh gốc được tải về từ kho lưu trữ tệp của monday và được kiểm tra từng byte. Các tệp không phải ảnh được liệt kê trong trường `Other files`.
-5. Snapshot được gửi về bridge; bridge lưu snapshot vào cache và trả về cho agent.
+1. Khi một phiên agent mở, MCP server của phiên đó (do agent CLI khởi động) khởi động bridge ở chế độ nền nếu bridge chưa chạy, và cứ 15 giây kiểm tra lại một lần xem bridge còn chạy không. Extension kết nối tới bridge trong vòng 30 giây, hoặc ngay khi bạn mở popup. Bridge vừa khởi động sẽ giữ request của agent tối đa 40 giây trong lúc chờ extension kết nối. Muốn bridge chỉ khởi động ở lần gọi tool đầu tiên thì đặt `MONDAY_BRIDGE_AUTOSTART=0` trong môi trường của MCP server.
+2. Agent gọi một MCP tool, và MCP server chuyển request tới bridge.
+3. Bridge gửi request tới extension đã pair qua một WebSocket cục bộ.
+4. Extension gọi **web API của chính monday** (`https://<account>.monday.com/v2`, GraphQL): cùng endpoint mà web app của monday dùng, với phiên đăng nhập trình duyệt của bạn và CSRF token của app. Một request trả về tên task, mọi cột dưới dạng văn bản, các update kèm phản hồi và tác giả, cùng các tệp đính kèm. Không có tab nào được mở.
+5. Ảnh gốc được tải về từ kho lưu trữ tệp của monday và được kiểm tra từng byte. Các tệp không phải ảnh được liệt kê trong trường `Other files`.
+6. Snapshot được gửi về bridge; bridge lưu snapshot vào cache và trả về cho agent.
 
 Extension không bao giờ crawl board, không đọc hay xuất giá trị cookie, và không thay ảnh gốc bằng ảnh chụp màn hình. Extension chỉ thấy được những task mà tài khoản monday của bạn thấy được.
 

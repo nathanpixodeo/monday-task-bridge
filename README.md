@@ -94,8 +94,8 @@ The installer adds a `monday-bridge` command to npm's global folder, like the `c
 | Command | What it does |
 | --- | --- |
 | `monday-bridge status` | Shows whether the bridge runs, is paired, and has the extension connected, plus the install, extension, and data folders. |
-| `monday-bridge start` | Starts the bridge in the background. You rarely need it: agents start the bridge on their own. |
-| `monday-bridge stop` | Stops the bridge. The next agent call starts it again. |
+| `monday-bridge start` | Starts the bridge in the background. You rarely need it: every agent session starts the bridge when it opens. |
+| `monday-bridge stop` | Stops the bridge. An open agent session starts it again within 15 seconds; otherwise the next session does. |
 | `monday-bridge run` | Runs the bridge in the current window, with its log on screen. Ctrl+C stops it. |
 | `monday-bridge pair 123456` | Approves the 6-digit code shown in the extension popup. |
 | `monday-bridge approval auto` | Lets agents read monday without a yes/no prompt each time. `manual` makes them ask again; `status` shows the mode. See [Approval mode](#approval-mode-auto-or-manual). |
@@ -225,11 +225,12 @@ The **Allow writing** switch, under the power button, lets agents edit monday; s
 
 ## How it works
 
-1. An agent calls an MCP tool. The MCP server (started by the agent CLI) passes the request to the bridge, and starts the bridge in the background if it is not running.
-2. The bridge sends the request to the paired extension over a local WebSocket.
-3. The extension calls **monday's own web API** (`https://<account>.monday.com/v2`, GraphQL): the same endpoint monday's web app uses, with your browser session and the app's CSRF token. One request returns the task name, every column as text, the updates with replies and authors, and the attached files. No tab opens.
-4. Original images are downloaded from monday's file storage and checked byte by byte. Files that are not images are listed in an `Other files` field.
-5. The snapshot goes back to the bridge, which caches it and returns it to the agent.
+1. When an agent session opens, its MCP server (started by the agent CLI) starts the bridge in the background if it is not running, and checks every 15 seconds that it still is. The extension connects to the bridge within 30 seconds, or at once when you open the popup. A bridge that has just started holds an agent's request for up to 40 seconds while the extension connects. To start the bridge only at the first tool call, set `MONDAY_BRIDGE_AUTOSTART=0` in the MCP server's environment.
+2. An agent calls an MCP tool, and the MCP server passes the request to the bridge.
+3. The bridge sends the request to the paired extension over a local WebSocket.
+4. The extension calls **monday's own web API** (`https://<account>.monday.com/v2`, GraphQL): the same endpoint monday's web app uses, with your browser session and the app's CSRF token. One request returns the task name, every column as text, the updates with replies and authors, and the attached files. No tab opens.
+5. Original images are downloaded from monday's file storage and checked byte by byte. Files that are not images are listed in an `Other files` field.
+6. The snapshot goes back to the bridge, which caches it and returns it to the agent.
 
 The extension never crawls boards, reads or exports cookie values, or replaces original images with screenshots. It can only see the tasks your monday account can see.
 
