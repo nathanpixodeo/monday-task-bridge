@@ -1,3 +1,5 @@
+import type { RecentRead } from './recent-reads'
+
 export interface Config {
   paired: boolean
   token: string | null
@@ -9,14 +11,14 @@ export interface Config {
   error: string | null
   /** Power switch: when false the worker stays disconnected, so agents cannot read tasks. */
   enabled: boolean
+  /** "Allow writing" switch: when false the worker refuses every agent write to monday. Off until the user turns it on. */
+  allowWrite: boolean
   /** When the current live connection was authenticated; null while not connected. */
   connectedAt: string | null
   capturing: boolean
   pendingOrigins: string[]
-  lastCaptureAt: string | null
-  lastTaskTitle: string | null
-  lastCaptureComplete: boolean | null
-  lastWarnings: string[]
+  /** Task reads agents asked for, newest first, at most MAX_RECENT_READS. */
+  recentReads: RecentRead[]
 }
 
 export const defaultConfig: Config = {
@@ -29,13 +31,11 @@ export const defaultConfig: Config = {
   status: 'disconnected',
   error: null,
   enabled: true,
+  allowWrite: false,
   connectedAt: null,
   capturing: false,
   pendingOrigins: [],
-  lastCaptureAt: null,
-  lastTaskTitle: null,
-  lastCaptureComplete: null,
-  lastWarnings: []
+  recentReads: []
 }
 
 /** Fields reset when this browser is no longer paired with the bridge. */
@@ -48,15 +48,13 @@ export const unpairedFields: Partial<Config> = {
   expiresAt: null,
   status: 'disconnected',
   error: null,
-  // A fresh pairing should come up connected
+  // A fresh pairing should come up connected, and read-only
   enabled: true,
+  allowWrite: false,
   connectedAt: null,
   capturing: false,
   pendingOrigins: [],
-  lastCaptureAt: null,
-  lastTaskTitle: null,
-  lastCaptureComplete: null,
-  lastWarnings: []
+  recentReads: []
 }
 
 export async function getConfig(): Promise<Config> {

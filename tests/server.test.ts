@@ -131,13 +131,15 @@ test('pairing, origin restrictions, original image storage and live capture work
     })
     assert.equal(ack.type, 'hello-ack')
 
-    const liveRead = send('/v1/read-open-task', {}, { 'X-Bridge-Admin-Token': adminToken })
-    const command = await new Promise<{ type: string; requestId: string }>((resolve, reject) => {
+    // An agent name too long to show is left out rather than refused
+    const liveRead = send('/v1/read-open-task', {}, { 'X-Bridge-Admin-Token': adminToken, 'X-Bridge-Agent': 'a'.repeat(65) })
+    const command = await new Promise<{ type: string; requestId: string; agent?: string }>((resolve, reject) => {
       ws!.once('message', data => {
         try { resolve(JSON.parse(data.toString())) } catch (error) { reject(error) }
       })
     })
     assert.equal(command.type, 'capture')
+    assert.equal('agent' in command, false)
     assert.equal((await send('/v1/snapshots', payload(command.requestId), {
       Origin: extensionOrigin, Authorization: `Bearer ${token}`
     })).status, 200)
@@ -148,7 +150,7 @@ test('pairing, origin restrictions, original image storage and live capture work
     assert.equal(live.snapshot.title, 'Example task')
     assert.deepEqual(await store.getImageBytes('image-1'), Buffer.from(pngBase64, 'base64'))
 
-    const nextCommand = () => new Promise<{ type: string; requestId: string; url?: string }>((resolve, reject) => {
+    const nextCommand = () => new Promise<{ type: string; requestId: string; url?: string; agent?: string }>((resolve, reject) => {
       ws!.once('message', data => {
         try { resolve(JSON.parse(data.toString())) } catch (error) { reject(error) }
       })
@@ -170,10 +172,12 @@ test('pairing, origin restrictions, original image storage and live capture work
     assert.equal(((await urlResult.json()) as { snapshot: TaskSnapshot }).snapshot.title, 'Example task')
 
     // No host given: falls back to the account host of the latest cached snapshot.
-    const idRead = send('/v1/read-task', { boardId: '123', itemId: '789' }, adminHeaders)
+    // The MCP server names the agent it reads for, and the extension gets that name for its read history
+    const idRead = send('/v1/read-task', { boardId: '123', itemId: '789' }, { ...adminHeaders, 'X-Bridge-Agent': 'claude-code' })
     const idCommand = await nextCommand()
     assert.equal(idCommand.type, 'capture')
     assert.equal(idCommand.url, 'https://team.monday.com/boards/123/pulses/789')
+    assert.equal(idCommand.agent, 'claude-code')
     assert.equal((await send('/v1/snapshots', payload(idCommand.requestId), {
       Origin: extensionOrigin, Authorization: `Bearer ${token}`
     })).status, 200)

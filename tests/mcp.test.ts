@@ -68,7 +68,7 @@ test('MCP exposes cached task and original image with no monday API token', { ti
   }
 })
 
-test('MCP offers monday_write_back only to a client that starts it with MONDAY_BRIDGE_ALLOW_WRITE=1', { timeout: 30_000 }, async () => {
+test('MCP always lists the agent writes, and monday_write_back only with MONDAY_BRIDGE_ALLOW_WRITE=1', { timeout: 30_000 }, async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'monday-bridge-mcp-write-'))
   const toolsWith = async (extra: Record<string, string>) => {
     const env: Record<string, string> = {}
@@ -94,6 +94,10 @@ test('MCP offers monday_write_back only to a client that starts it with MONDAY_B
     const reading = await toolsWith({})
     assert.ok(reading.includes('monday_list_boards'))
     assert.ok(!reading.includes('monday_write_back'))
+    // The agent writes are always listed: the popup's "Allow writing" switch decides, at call time
+    for (const tool of ['monday_add_update', 'monday_update_item', 'monday_create_item', 'monday_move_item']) {
+      assert.ok(reading.includes(tool), tool)
+    }
     assert.ok(!(await toolsWith({ MONDAY_BRIDGE_ALLOW_WRITE: 'yes' })).includes('monday_write_back'))
     assert.ok((await toolsWith({ MONDAY_BRIDGE_ALLOW_WRITE: '1' })).includes('monday_write_back'))
   } finally {

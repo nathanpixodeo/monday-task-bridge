@@ -3,6 +3,8 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Config } from './helpers/storage'
 import { getConfig } from './helpers/storage'
+import { MAX_RECENT_READS, agentLabel } from './helpers/recent-reads'
+import type { RecentRead } from './helpers/recent-reads'
 import './style.css'
 
 const BRIDGE_HOST = '127.0.0.1:3457'
@@ -300,15 +302,6 @@ function RetryIcon() {
   )
 }
 
-function DocIcon() {
-  return (
-    <Icon>
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
-      <path d="M14 3v5h5M9 13h6M9 17h4" />
-    </Icon>
-  )
-}
-
 function InfoIcon() {
   return (
     <Icon>
@@ -349,6 +342,15 @@ function CheckIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
       <path d="m5 12.5 4.5 4.5L19 7.5" />
+    </Icon>
+  )
+}
+
+function PencilIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3" />
+      <path d="m13.5 8.5 3 3" />
     </Icon>
   )
 }
@@ -740,6 +742,44 @@ function SessionChip({ since, now }: { since: string; now: number }) {
   )
 }
 
+/** The "Allow writing" switch, sized to sit next to the session chip. */
+function WriteToggle({ allowWrite }: { allowWrite: boolean }) {
+  const [busy, setBusy] = useState(false)
+
+  const toggle = async () => {
+    setBusy(true)
+    await send({ type: 'set-allow-write', enabled: !allowWrite })
+    setBusy(false)
+  }
+
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={allowWrite}
+      disabled={busy}
+      onClick={() => void toggle()}
+      title={
+        allowWrite
+          ? 'Agents can edit monday as you: updates, status, tags, columns, items. They still ask before each write.'
+          : 'Agents can only read. Switch on to let them edit monday as you.'
+      }
+      className={`inline-flex h-7 items-center gap-1.5 rounded-full py-1 pr-1 pl-2.5 text-xs font-medium ring-1 transition-colors duration-200 ring-inset ${allowWrite ? 'bg-amber-500/10 text-amber-200 ring-amber-400/25' : 'bg-white/[0.05] text-slate-300 ring-white/10 hover:bg-white/[0.09]'} ${busy ? 'cursor-progress' : 'cursor-pointer'} ${FOCUS_RING}`}
+    >
+      <PencilIcon className="size-3.5" />
+      Allow writing
+      <span
+        aria-hidden="true"
+        className={`relative ml-0.5 h-4 w-7 shrink-0 rounded-full transition-colors duration-200 ${allowWrite ? 'bg-amber-500' : 'bg-white/20'}`}
+      >
+        <span
+          className={`absolute top-0.5 left-0.5 size-3 rounded-full bg-white shadow transition-transform duration-200 motion-reduce:transition-none ${allowWrite ? 'translate-x-3' : ''}`}
+        />
+      </span>
+    </button>
+  )
+}
+
 function Hero({
   config,
   mode,
@@ -777,7 +817,10 @@ function Hero({
     off: { title: 'Disconnected', subtitle: 'Tap to connect your agents' },
     connecting: { title: 'Connecting…', subtitle: `Reaching the bridge on ${BRIDGE_HOST}` },
     offline: { title: 'Bridge offline', subtitle: `Start it with ${BRIDGE_COMMAND}` },
-    connected: { title: 'Connected', subtitle: 'Agents can read your monday tasks' }
+    connected: {
+      title: 'Connected',
+      subtitle: config.allowWrite ? 'Agents can read and edit your monday tasks' : 'Agents can read your monday tasks'
+    }
   }
 
   return (
@@ -801,8 +844,9 @@ function Hero({
         {copy[mode].subtitle}
       </p>
       {/* A fixed slot keeps the hero the same height whether or not a chip shows */}
-      <div className="mt-3 flex h-7 items-center">
+      <div className="mt-3 flex h-7 items-center gap-2">
         {mode === 'connected' && config.connectedAt && <SessionChip since={config.connectedAt} now={now} />}
+        {config.paired && <WriteToggle allowWrite={config.allowWrite} />}
         {showBridgeHint && (
           <p
             role="status"
@@ -911,76 +955,109 @@ function PairingCard({ code, expiresAt }: { code: string; expiresAt: string | nu
   )
 }
 
-function LastCaptureRow({ config }: { config: Config }) {
-  const [open, setOpen] = useState(false)
+/** How many reads the popup lists before "History". */
+const READS_SHOWN = 3
 
-  if (!config.lastCaptureAt) {
-    return (
-      <div className="flex items-center gap-3 px-4 py-3">
-        <IconTile>
-          <DocIcon />
-        </IconTile>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm leading-5 font-medium text-slate-300">No captures yet</p>
-          <p className="text-xs leading-4 text-slate-400">Open a monday task to capture it</p>
-        </div>
-      </div>
-    )
-  }
-
-  const title = config.lastTaskTitle || 'Untitled task'
-  const complete = config.lastCaptureComplete === true
-  const warnings = config.lastWarnings
-  const count = warnings.length
+function ReadRow({ read, detailed = false }: { read: RecentRead; detailed?: boolean }) {
+  const title = read.title || 'Untitled task'
+  const count = read.warnings.length
 
   return (
-    <div className="px-4 py-3">
-      <div className="flex items-center gap-3">
-        <IconTile>
-          <DocIcon />
-        </IconTile>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm leading-5 font-medium text-slate-100" title={title}>
-            <span className="sr-only">Last capture: </span>
-            {title}
-          </p>
-          <p className="flex items-center gap-1.5 text-xs leading-4 text-slate-400">
-            <TimeAgo iso={config.lastCaptureAt} />
-            <span aria-hidden="true">·</span>
-            <span
-              aria-hidden="true"
-              className={`size-1.5 rounded-full ${complete ? 'bg-emerald-400' : 'bg-amber-400'}`}
-            />
-            {complete ? 'Complete' : 'Incomplete'}
-          </p>
-        </div>
-        {count > 0 && (
-          <button
-            type="button"
-            onClick={() => setOpen(!open)}
-            aria-expanded={open}
-            aria-controls="capture-warnings"
-            aria-label={`${open ? 'Hide' : 'Show'} ${count} warning${count === 1 ? '' : 's'}`}
-            className={`-mr-1.5 inline-flex h-7 shrink-0 cursor-pointer items-center gap-0.5 rounded-lg pr-1 pl-2 text-xs font-semibold text-amber-300 tabular-nums transition duration-150 hover:bg-white/[0.06] ${FOCUS_RING}`}
-          >
-            {count}
-            <ChevronIcon
-              className={`size-4 transition-transform duration-200 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}
-            />
-          </button>
-        )}
-      </div>
-      {open && (
-        <ul
-          id="capture-warnings"
-          className="mt-2.5 ml-11 flex animate-fade-in list-disc flex-col gap-1 pl-4 text-xs leading-4 break-words text-amber-200/80 marker:text-amber-400/60 motion-reduce:animate-none"
-        >
-          {warnings.map((warning, index) => (
+    <li className="px-4 py-2.5">
+      <a
+        href={read.url}
+        target="_blank"
+        rel="noreferrer"
+        title={title}
+        className={`block truncate rounded text-sm leading-5 font-medium text-slate-100 hover:text-white hover:underline ${FOCUS_RING}`}
+      >
+        {title}
+      </a>
+      <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-4 text-slate-400">
+        <span className="truncate font-medium text-slate-300" title={read.agent ?? undefined}>
+          <span className="sr-only">Read by </span>
+          {agentLabel(read.agent)}
+        </span>
+        <span aria-hidden="true">·</span>
+        <span className="shrink-0">
+          <TimeAgo iso={read.at} />
+        </span>
+        <span aria-hidden="true">·</span>
+        <span
+          aria-hidden="true"
+          className={`size-1.5 shrink-0 rounded-full ${read.complete ? 'bg-emerald-400' : 'bg-amber-400'}`}
+        />
+        <span className="shrink-0">{read.complete ? 'Complete' : 'Incomplete'}</span>
+      </p>
+      {detailed && count > 0 && (
+        <ul className="mt-1.5 flex list-disc flex-col gap-1 pl-4 text-xs leading-4 break-words text-amber-200/80 marker:text-amber-400/60">
+          {read.warnings.map((warning, index) => (
             <li key={`${index}-${warning}`}>{warning}</li>
           ))}
         </ul>
       )}
-    </div>
+    </li>
+  )
+}
+
+function RecentReads({ reads }: { reads: RecentRead[] }) {
+  const historyRef = useRef<HTMLDialogElement>(null)
+
+  return (
+    <section aria-labelledby="reads-title" className={`${CARD} ${SURFACE}`}>
+      <div className="flex h-10 items-center justify-between pr-2 pl-4">
+        <h3 id="reads-title" className={LABEL}>
+          Recent reads
+        </h3>
+        {reads.length > 0 && (
+          <button
+            type="button"
+            onClick={() => historyRef.current?.showModal()}
+            aria-haspopup="dialog"
+            className={`inline-flex h-7 cursor-pointer items-center gap-0.5 rounded-lg pr-1 pl-2 text-xs font-semibold text-slate-300 transition duration-150 hover:bg-white/[0.06] hover:text-white ${FOCUS_RING}`}
+          >
+            History
+            <ChevronIcon className="size-4 -rotate-90" />
+          </button>
+        )}
+      </div>
+      {reads.length === 0 ? (
+        <p className="px-4 pb-3 text-xs leading-4 text-slate-400">No reads yet. Ask your agent to read a monday task.</p>
+      ) : (
+        <ul className="divide-y divide-white/[0.06] border-t border-white/[0.06]">
+          {reads.slice(0, READS_SHOWN).map((read) => (
+            <ReadRow key={`${read.at}-${read.url}`} read={read} />
+          ))}
+        </ul>
+      )}
+      <dialog
+        ref={historyRef}
+        aria-labelledby="history-title"
+        // A click on the backdrop lands on the dialog itself; its content fills the box
+        onClick={(event) => {
+          if (event.target === event.currentTarget) event.currentTarget.close()
+        }}
+        // Flex only while open, so a closed dialog stays hidden; the list scrolls inside the capped height
+        className="m-auto max-h-[calc(100%-32px)] w-[316px] max-w-[calc(100%-24px)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0F1529] p-0 text-slate-100 shadow-2xl backdrop:bg-black/60 open:flex"
+      >
+        <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.08] py-1.5 pr-1.5 pl-4">
+          <div className="min-w-0 flex-1">
+            <h2 id="history-title" className="text-sm leading-5 font-semibold text-white">
+              Read history
+            </h2>
+            <p className="text-xs leading-4 text-slate-400">The last {MAX_RECENT_READS} tasks agents read, newest first</p>
+          </div>
+          <IconButton label="Close" onClick={() => historyRef.current?.close()}>
+            <XIcon />
+          </IconButton>
+        </div>
+        <ul className="min-h-0 flex-1 divide-y divide-white/[0.06] overflow-y-auto">
+          {reads.map((read) => (
+            <ReadRow key={`${read.at}-${read.url}`} read={read} detailed />
+          ))}
+        </ul>
+      </dialog>
+    </section>
   )
 }
 
@@ -1258,11 +1335,7 @@ function Popup() {
               </>
             )}
 
-            {config.paired && (
-              <section aria-label="Last read" className={`${CARD} ${SURFACE}`}>
-                <LastCaptureRow config={config} />
-              </section>
-            )}
+            {config.paired && <RecentReads reads={config.recentReads} />}
           </main>
         </>
       )}

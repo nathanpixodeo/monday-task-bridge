@@ -2,7 +2,8 @@
  * bridge/approval.ts – the permission rules that let agent CLIs run the bridge's read tools without asking.
  *
  * Each function takes a CLI's config text and returns it with the rules added (`auto`) or removed (`manual`).
- * Only the read tools get a rule: monday_write_back always asks.
+ * Only the read tools get a rule: the write tools (monday_add_update, monday_update_item, monday_create_item,
+ * monday_move_item, monday_write_back) always ask.
  */
 
 export type ApprovalMode = 'auto' | 'manual'

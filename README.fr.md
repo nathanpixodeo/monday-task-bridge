@@ -6,7 +6,7 @@ Auteur : **Nhat Nguyen** · Développé par **Nexkit** · [nathanpixodeo@gmail.c
 
 *Ce document est une traduction du README anglais. Si les deux versions diffèrent, le [README anglais](README.md) fait foi.*
 
-Permettez à un agent IA (Claude Code, Codex, agy ou tout client MCP) de lire les tâches monday.com, avec leurs mises à jour (updates) et leurs images originales, via **votre Chrome connecté à monday**. Vous n'avez besoin ni d'un token d'API monday, ni d'une app installée par un administrateur, ni d'une offre MCP monday : connectez-vous une fois à monday dans Chrome, et l'extension fait le reste.
+Permettez à un agent IA (Claude Code, Codex, agy ou tout client MCP) de lire les tâches monday.com, avec leurs mises à jour (updates) et leurs images originales, via **votre Chrome connecté à monday**. Si vous activez l'écriture, il peut aussi y travailler : publier des mises à jour, changer le statut, les tags et d'autres colonnes, créer des sous-éléments. Vous n'avez besoin ni d'un token d'API monday, ni d'une app installée par un administrateur, ni d'une offre MCP monday : connectez-vous une fois à monday dans Chrome, et l'extension fait le reste.
 
 Le projet comprend deux parties qui s'exécutent sur votre PC :
 
@@ -167,7 +167,7 @@ monday-bridge approval manual    # demander avant chaque lecture
 monday-bridge approval status    # afficher le mode de chaque CLI
 ```
 
-`auto` ne couvre que les outils de lecture. `monday_write_back` demande toujours une confirmation. La commande écrit les règles suivantes, et `manual` les retire :
+`auto` ne couvre que les outils de lecture. Les outils d'écriture demandent toujours une confirmation. La commande écrit les règles suivantes, et `manual` les retire :
 
 | CLI | Fichier | Règle pour chaque outil de lecture |
 | --- | --- | --- |
@@ -192,7 +192,22 @@ monday-bridge approval status    # afficher le mode de chaque CLI
 
 Un déroulé typique pour un agent : appeler `monday_read_task` avec le lien de la tâche, lire `complete` et `warnings`, puis appeler `monday_get_image` pour chaque pièce jointe qu'il doit voir.
 
-Les outils ne font que lire. La seule exception est `monday_write_back`, qui ajoute une mise à jour à un élément et peut modifier sa colonne Statut (Status). Les agents ne voient jamais cet outil, sauf si leur client MCP démarre le serveur avec `MONDAY_BRIDGE_ALLOW_WRITE=1`. L'installeur ne définit pas cette variable.
+### Écrire dans monday
+
+L'écriture est désactivée tant que vous ne l'activez pas. Ouvrez la popup de l'extension et activez **Allow writing** (autoriser l'écriture). Les agents écrivent alors en votre nom : monday affiche votre nom sur tout ce qu'ils ajoutent. Vous pouvez la désactiver à tout moment. Le changement s'applique aussitôt, sans redémarrer l'agent. Désappairer l'extension la désactive aussi.
+
+| Outil MCP | Résultat |
+| --- | --- |
+| `monday_add_update` | Ajoute une mise à jour à un élément, ou répond à l'une de ses mises à jour (`replyToUpdateId`). |
+| `monday_update_item` | Modifie des colonnes en une seule fois, par titre ou id de colonne : un libellé de statut, des tags (une liste, ou `{add, remove}`), des personnes (e-mails, noms complets ou `"me"` ; une liste, ou `{add, remove}`), une date `YYYY-MM-DD` ou `YYYY-MM-DD HH:mm`, une timeline `{from, to}`, des nombres, du texte, du texte long, une case à cocher, des libellés de liste déroulante, un lien, ou le nom de l'élément. `null` vide une colonne. |
+| `monday_create_item` | Crée un élément dans un groupe (par titre ou id), ou un sous-élément sous `parentItemId`, et peut remplir ses colonnes. |
+| `monday_move_item` | Déplace un élément vers un autre groupe (par titre ou id). |
+
+Rien n'est supprimé ni archivé. Un tag manquant n'est créé que si l'agent passe `createMissingTags`. Un libellé de statut ou de liste déroulante manquant n'est créé que si l'agent passe `createMissingLabels`. Aucune écriture n'est retentée.
+
+Les agents voient toujours ces quatre outils. Quand l'interrupteur est désactivé, ils renvoient `WRITE_DISABLED`, et l'agent doit vous demander d'activer l'écriture. Le bridge et l'extension vérifient tous deux l'interrupteur. `monday-bridge status` l'affiche sur la ligne `Writing:`. Les CLI d'agents demandent une confirmation avant chaque écriture, même en mode d'approbation `auto`.
+
+`monday_write_back` est à part, pour Nexkit Agent Hub. Il ajoute une mise à jour à un élément et peut modifier sa colonne Statut (Status). Les agents ne le voient que si leur client MCP démarre le serveur avec `MONDAY_BRIDGE_ALLOW_WRITE=1`. L'installeur ne définit pas cette variable, et l'interrupteur de la popup ne s'applique pas à cet outil.
 
 ## La popup de l'extension
 
@@ -202,9 +217,13 @@ Le **power button** active et désactive la connexion. Quand il est désactivé,
 | --- | --- |
 | `…` (violet) | Lecture d'une tâche en cours, ou attente de l'approbation de l'appairage. |
 | `!` (rouge) | La connexion est activée, mais le bridge est hors ligne ou non connecté. |
-| `!` (ambre) | La dernière lecture est incomplète. Ouvrez la popup pour lire ses avertissements. |
+| `!` (ambre) | La dernière lecture est incomplète. Ouvrez **History** (historique) dans la popup pour lire ses avertissements. |
 | `+` (ambre) | Un hôte d'images a besoin d'une autorisation. |
 | aucun | L'extension est connectée (icône en couleur), ou désactivée ou non appairée (icône grise). |
+
+L'interrupteur **Allow writing**, sous le power button, permet aux agents de modifier monday ; voir [Écrire dans monday](#écrire-dans-monday). Il est désactivé par défaut, et il devient ambre quand il est activé.
+
+**Recent reads** (lectures récentes) liste les trois dernières tâches lues par les agents : quel agent a lu chacune, quand, et si la lecture était complète. **History** ouvre les dix dernières, avec les avertissements de chaque lecture incomplète. Cliquez sur une tâche pour l'ouvrir dans monday. Le nom de l'agent est celui que donne son client MCP, comme Claude Code, Codex ou agy ; un client qui n'en donne pas apparaît comme « Unknown agent ».
 
 ## Fonctionnement
 

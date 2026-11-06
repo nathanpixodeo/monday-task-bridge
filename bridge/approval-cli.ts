@@ -7,7 +7,7 @@
  *   manual  Removes those rules, so each CLI asks again (its default).
  *   status  Shows the mode of each CLI.
  *
- * Only the read tools get a rule; monday_write_back always asks. MONDAY_BRIDGE_CLIENTS limits the CLIs it changes,
+ * Only the read tools get a rule; the write tools always ask. MONDAY_BRIDGE_CLIENTS limits the CLIs it changes,
  * as in the installer. Claude Code uses the profile in CLAUDE_CONFIG_DIR, Codex the folder in CODEX_HOME.
  */
 

@@ -4,6 +4,9 @@ import { ITEM_QUERY, mapItem } from './helpers/monday-api'
 import type { ApiItem, MappedTask } from './helpers/monday-api'
 import { readAssignedTasks } from './helpers/assigned-tasks'
 import { writeBackToItem, WriteBackTargetError } from './helpers/write-back'
+import { performWrite, WriteTargetError } from './helpers/item-writes'
+import { addRecentRead, cleanAgentName } from './helpers/recent-reads'
+import type { RecentRead } from './helpers/recent-reads'
 import type {
   TaskSnapshot,
   TaskAttachment,
@@ -70,7 +73,12 @@ async function connectWs() {
       // Do NOT set connected yet — wait for hello-ack
       getConfig().then((c) => {
         if (c.token && ws === socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'hello', token: c.token, capabilities: ['assignedTasks', 'boardFilter', 'writeBack'] } satisfies ExtensionToBridgeMessage))
+          socket.send(JSON.stringify({
+            type: 'hello',
+            token: c.token,
+            capabilities: ['assignedTasks', 'boardFilter', 'writeBack', 'write'],
+            writeEnabled: c.allowWrite
+          } satisfies ExtensionToBridgeMessage))
         }
       })
     }
@@ -91,7 +99,7 @@ async function connectWs() {
             reportCaptureError(msg.requestId, 'Not a monday task URL')
             return
           }
-          performCapture(msg.requestId, msg.url).catch(async (err) => {
+          performCapture(msg.requestId, msg.url, cleanAgentName(msg.agent)).catch(async (err) => {
             reportCaptureError(msg.requestId, String(err))
           })
         } else if (msg.type === 'list-assigned-tasks') {
@@ -103,6 +111,11 @@ async function connectWs() {
           if (!authenticated) return
           writeBack(msg).catch((err) => {
             reportWriteBackError(msg.requestId, err)
+          })
+        } else if (msg.type === 'write') {
+          if (!authenticated) return
+          write(msg).catch((err) => {
+            reportWriteError(msg.requestId, err)
           })
         }
       } catch (e) {
@@ -193,7 +206,7 @@ function badgeFor(config: Config): { text: string; color: string; title: string 
   if (config.status !== 'authenticated') return { text: '!', color: '#E11D48', title: 'Bridge offline' }
   if (config.pendingOrigins.length > 0) return { text: '+', color: '#D97706', title: 'Image host permission needed' }
   if (config.capturing) return { text: '…', color: '#7C3AED', title: 'Capturing task' }
-  if (config.lastCaptureComplete === false) return { text: '!', color: '#D97706', title: 'Last capture incomplete' }
+  if (config.recentReads[0]?.complete === false) return { text: '!', color: '#D97706', title: 'Last read incomplete' }
   return { text: '', color: '#16A34A', title: 'Connected' }
 }
 
@@ -394,6 +407,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true
   }
 
+  if (msg.type === 'set-allow-write') {
+    // Only the popup may switch writing on: no tab, and the sender is this extension's own popup page
+    if (sender.tab || sender.url !== chrome.runtime.getURL('popup.html')) {
+      sendResponse({ ok: false })
+      return false
+    }
+    ;(async () => {
+      const config = await setConfig({ allowWrite: msg.enabled === true })
+      sendWs({ type: 'write-access', enabled: config.allowWrite })
+      sendResponse({ ok: true })
+    })()
+    return true
+  }
+
   if (msg.type === 'clear-error') {
     ;(async () => {
       const config = await getConfig()
@@ -533,7 +560,17 @@ async function findTaskTabUrl(): Promise<string | undefined> {
   return mondayTabs.find((t) => t.url && isMondayTaskUrl(t.url))?.url
 }
 
-async function performCapture(requestId?: string, sourceUrl?: string) {
+let readHistory: Promise<unknown> = Promise.resolve()
+
+/** Adds a finished read to the popup's history. Queued, so reads that finish together all land. */
+function recordRead(read: RecentRead): Promise<unknown> {
+  readHistory = readHistory
+    .then(async () => setConfig({ recentReads: addRecentRead((await getConfig()).recentReads, read) }))
+    .catch(() => {})
+  return readHistory
+}
+
+async function performCapture(requestId?: string, sourceUrl?: string, agent: string | null = null) {
   const captureDeadline = Date.now() + 150_000
   const config = await getConfig()
   if (!config.token) {
@@ -699,13 +736,15 @@ async function performCapture(requestId?: string, sourceUrl?: string) {
 
     if (!postRes.ok) throw new Error(`Bridge returned ${postRes.status}`)
 
-    await setConfig({
-      lastCaptureAt: snapshot.capturedAt,
-      lastTaskTitle: snapshot.title,
-      lastCaptureComplete: snapshot.complete,
-      lastWarnings: warnings,
-      error: null
+    await recordRead({
+      title: snapshot.title,
+      url: targetUrl,
+      at: snapshot.capturedAt,
+      complete: snapshot.complete,
+      warnings,
+      agent
     })
+    await setConfig({ error: null })
 
     if (requestId) {
       sendWs({ type: 'capture-result', requestId })
@@ -819,6 +858,52 @@ function reportWriteBackError(requestId: string, err: unknown) {
   const error = err instanceof Error ? err.message : String(err)
   sendWs({ type: 'write-back-result', requestId, error, code: err instanceof WriteBackTargetError ? 'INVALID_TARGET' : undefined })
   setConfig({ error: `Writing back to monday failed: ${error}` })
+}
+
+// ─── Agent writes ────────────────────────────────────────────────────
+
+const WRITE_OFF_MESSAGE = 'Writing is off. Turn on "Allow writing" in the Monday Task Bridge popup in Chrome, then try again.'
+
+/** Does one write an agent asked for, only while "Allow writing" is on, and tells the bridge what was written. */
+async function write(msg: Extract<BridgeToExtensionMessage, { type: 'write' }>) {
+  const { requestId } = msg
+  // The bridge checks the switch too; this is the check that counts, made where the user switches it
+  if (!(await getConfig()).allowWrite) {
+    sendWs({ type: 'write-result', requestId, error: WRITE_OFF_MESSAGE, code: 'WRITE_DISABLED' })
+    return
+  }
+  const host = msg.accountHost ?? (await findAccountHost()) ?? msg.cachedHost
+  if (!host) {
+    sendWs({
+      type: 'write-result',
+      requestId,
+      error: 'No monday account to write to: pass accountHost (e.g. team.monday.com), or open monday.com in this Chrome profile',
+      code: 'INVALID_TARGET'
+    })
+    return
+  }
+  // The bridge validates the host too; re-check so this worker only ever writes to a monday account
+  if (accountHostOf(`https://${host}/`) !== host.toLowerCase()) {
+    sendWs({ type: 'write-result', requestId, error: `${host} is not a monday account`, code: 'INVALID_TARGET' })
+    return
+  }
+  activeCaptures++
+  try {
+    await setConfig({ capturing: true })
+    const result = await performWrite(mondayGraphql, host.toLowerCase(), msg)
+    sendWs({ type: 'write-result', requestId, result })
+    await setConfig({ error: null })
+  } finally {
+    activeCaptures--
+    await setConfig({ capturing: activeCaptures > 0 })
+  }
+}
+
+function reportWriteError(requestId: string, err: unknown) {
+  const error = err instanceof Error ? err.message : String(err)
+  const invalid = err instanceof WriteTargetError || err instanceof WriteBackTargetError
+  sendWs({ type: 'write-result', requestId, error, code: invalid ? 'INVALID_TARGET' : undefined })
+  setConfig({ error: `Writing to monday failed: ${error}` })
 }
 
 // ─── Utilities ───────────────────────────────────────────────────────

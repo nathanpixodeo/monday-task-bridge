@@ -4,7 +4,7 @@ English · [Français](README.fr.md) · [Tiếng Việt](README.vi.md)
 
 Author: **Nhat Nguyen** · Developed by **Nexkit** · [nathanpixodeo@gmail.com](mailto:nathanpixodeo@gmail.com)
 
-Let an AI agent (Claude Code, Codex, agy, or any MCP client) read monday.com tasks, with their updates and original images, through **your signed-in Chrome**. You need no monday API token, no admin-installed app, and no monday MCP plan: sign in to monday in Chrome once, and the extension does the rest.
+Let an AI agent (Claude Code, Codex, agy, or any MCP client) read monday.com tasks, with their updates and original images, through **your signed-in Chrome**. When you switch writing on, it can also work on them: post updates, set status, tags and other columns, create subitems. You need no monday API token, no admin-installed app, and no monday MCP plan: sign in to monday in Chrome once, and the extension does the rest.
 
 It has two parts that run on your PC:
 
@@ -165,7 +165,7 @@ monday-bridge approval manual    # ask before each read
 monday-bridge approval status    # show the mode of each CLI
 ```
 
-`auto` covers the read tools only. `monday_write_back` always asks. The command writes these rules, and `manual` removes them again:
+`auto` covers the read tools only. The write tools always ask. The command writes these rules, and `manual` removes them again:
 
 | CLI | File | Rule for each read tool |
 | --- | --- | --- |
@@ -190,7 +190,22 @@ monday-bridge approval status    # show the mode of each CLI
 
 A typical agent flow is: call `monday_read_task` with the task link, read `complete` and `warnings`, then call `monday_get_image` for each attachment it needs to see.
 
-The tools only read. The one exception is `monday_write_back`, which adds an update to an item and can set its Status. Agents never see this tool unless their MCP client starts the server with `MONDAY_BRIDGE_ALLOW_WRITE=1`. The installer does not set it.
+### Writing to monday
+
+Writing is off until you turn it on. Open the extension popup and switch on **Allow writing**. Agents then write as you: monday shows your name on everything they add. You can switch it off at any time. The change applies at once, without restarting the agent. Unpairing also switches it off.
+
+| MCP tool | Result |
+| --- | --- |
+| `monday_add_update` | Adds an update to an item, or replies to one of its updates (`replyToUpdateId`). |
+| `monday_update_item` | Sets columns in one change, by column title or id: a status label, tags (a list, or `{add, remove}`), people (emails, full names, or `"me"`; a list, or `{add, remove}`), a date `YYYY-MM-DD` or `YYYY-MM-DD HH:mm`, a timeline `{from, to}`, numbers, text, long text, a checkbox, dropdown labels, a link, or the item name. `null` clears a column. |
+| `monday_create_item` | Creates an item in a group (by title or id), or a subitem under `parentItemId`, and can set its columns. |
+| `monday_move_item` | Moves an item to another group (by title or id). |
+
+Nothing is deleted or archived. A missing tag is created only when the agent passes `createMissingTags`. A missing status or dropdown label is created only when the agent passes `createMissingLabels`. No write is retried.
+
+Agents always see these four tools. While the switch is off, they return `WRITE_DISABLED`, and the agent should ask you to switch writing on. The bridge and the extension both check the switch. `monday-bridge status` shows it on the `Writing:` line. Agent CLIs ask before every write, even in `auto` approval mode.
+
+`monday_write_back` is separate, for Nexkit Agent Hub. It adds an update to an item and can set its Status. Agents see it only when their MCP client starts the server with `MONDAY_BRIDGE_ALLOW_WRITE=1`. The installer does not set it, and the popup switch does not apply to it.
 
 ## The extension popup
 
@@ -200,9 +215,13 @@ The **power button** turns the connection on and off. While it is off, reads fai
 | --- | --- |
 | `…` (violet) | Reading a task, or waiting for pairing approval. |
 | `!` (red) | The connection is on, but the bridge is offline or not connected. |
-| `!` (amber) | The last read is incomplete. Open the popup to read its warnings. |
+| `!` (amber) | The last read is incomplete. Open **History** in the popup to read its warnings. |
 | `+` (amber) | An image host needs permission. |
 | none | Connected (color icon), or turned off or not paired (grey icon). |
+
+The **Allow writing** switch, under the power button, lets agents edit monday; see [Writing to monday](#writing-to-monday). It is off by default, and it turns amber while it is on.
+
+**Recent reads** lists the last three tasks agents read: which agent read each one, when, and whether the read was complete. **History** opens the last ten, with the warnings of each incomplete read. Click a task to open it in monday. The agent name is the one its MCP client gives, such as Claude Code, Codex, or agy; a client that gives none shows as "Unknown agent".
 
 ## How it works
 

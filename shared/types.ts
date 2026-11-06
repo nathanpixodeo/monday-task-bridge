@@ -111,17 +111,84 @@ export interface WriteBackResult {
   statusSet: boolean
 }
 
+/**
+ * A value to set in one column, written the way a person would type it: a status label, tag names, people's emails
+ * or names, a date. `null` clears the column. Arrays set the whole list; `{ add, remove }` changes the current one.
+ */
+export type ColumnInput =
+  | string
+  | number
+  | boolean
+  | null
+  | string[]
+  | { add?: string[]; remove?: string[] }
+  | { from: string; to: string }
+  | { url: string; text?: string }
+
+/** Column values keyed by a column's title (case does not matter) or id. */
+export type ColumnInputs = Record<string, ColumnInput>
+
+/** What an agent asks to write to monday while "Allow writing" is on in the extension popup. */
+export type WriteRequest = { accountHost?: string } & (
+  | { op: 'add-update'; boardId: string; itemId: string; body: string; replyToUpdateId?: string }
+  | {
+      op: 'update-item'
+      boardId: string
+      itemId: string
+      columns: ColumnInputs
+      createMissingLabels?: boolean
+      createMissingTags?: boolean
+    }
+  | {
+      op: 'create-item'
+      boardId: string
+      name: string
+      /** Creates a subitem of this item (on `boardId`) instead of an item on the board. */
+      parentItemId?: string
+      /** The group's id or title; the board's top group without it. Not used for a subitem. */
+      group?: string
+      columns?: ColumnInputs
+      createMissingLabels?: boolean
+      createMissingTags?: boolean
+    }
+  | { op: 'move-item'; boardId: string; itemId: string; group: string }
+)
+
+/** What the extension wrote: the item (or update) it touched, and what changed. */
+export interface WriteResult {
+  op: WriteRequest['op']
+  accountHost: string
+  boardId: string
+  itemId: string
+  /** The update added, for add-update. */
+  updateId?: string
+  /** The titles of the columns set, for update-item and create-item. */
+  columnsSet?: string[]
+  /** The group the item is in now, for move-item and create-item. */
+  group?: { id: string; title: string }
+  /** Tags or labels that did not exist and were created. */
+  created?: string[]
+}
+
+export type WriteErrorCode = 'INVALID_TARGET' | 'WRITE_DISABLED'
+
 export type ExtensionToBridgeMessage =
-  | { type: 'hello'; token: string; capabilities?: string[] }
+  /** `writeEnabled`: whether "Allow writing" is on in the popup; absent from an extension older than writing. */
+  | { type: 'hello'; token: string; capabilities?: string[]; writeEnabled?: boolean }
   | { type: 'heartbeat' }
   | { type: 'capture-result'; requestId: string; error?: string }
   | { type: 'assigned-tasks-error'; requestId: string; error: string; code?: 'INVALID_TARGET' }
   /** The answer to a write-back: what was written, or why nothing (or not all of it) was. */
   | { type: 'write-back-result'; requestId: string; result?: WriteBackResult; error?: string; code?: 'INVALID_TARGET' }
+  /** "Allow writing" was switched in the popup. */
+  | { type: 'write-access'; enabled: boolean }
+  /** The answer to a write: what was written, or why nothing was. */
+  | { type: 'write-result'; requestId: string; result?: WriteResult; error?: string; code?: WriteErrorCode }
 
 export type BridgeToExtensionMessage =
   | { type: 'hello-ack' }
-  | { type: 'capture'; requestId: string; url?: string }
+  /** `agent` is the name the asking MCP client gave itself, shown in the popup's read history. */
+  | { type: 'capture'; requestId: string; url?: string; agent?: string }
   /** `accountHost` was asked for explicitly; `cachedHost` is the latest snapshot's, used only when no monday tab is open. */
   | {
       type: 'list-assigned-tasks'
@@ -135,3 +202,5 @@ export type BridgeToExtensionMessage =
     }
   /** Write to one item with the signed-in session: only ever sent for a write the bridge was asked for. */
   | ({ type: 'write-back'; requestId: string } & WriteBackRequest)
+  /** An agent's write; `cachedHost` is the latest snapshot's, used only when no account host was given or open. */
+  | ({ type: 'write'; requestId: string; cachedHost?: string } & WriteRequest)

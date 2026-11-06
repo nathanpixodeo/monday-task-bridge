@@ -32,6 +32,8 @@ interface Health {
   status?: string
   paired?: boolean
   extensionConnected?: boolean
+  writeSupported?: boolean
+  writeEnabled?: boolean
   build?: string
   pid?: number
 }
@@ -102,6 +104,13 @@ async function run(): Promise<number> {
   return runScript('server.js')
 }
 
+/** Whether agents may write, as the extension's "Allow writing" switch says. */
+function writingState(state: Health): string {
+  if (!state.extensionConnected) return 'unknown until the extension connects'
+  if (!state.writeSupported) return 'off (reload the extension in chrome://extensions to get the switch)'
+  return state.writeEnabled ? 'on (agents can edit monday; switch it off in the extension popup)' : 'off (agents only read; "Allow writing" in the extension popup turns it on)'
+}
+
 async function status(): Promise<number> {
   const state = await health()
   const dataDir = resolveDataDir()
@@ -109,6 +118,7 @@ async function status(): Promise<number> {
     console.log(`Bridge:     running at ${BRIDGE_BASE} (pid ${state.pid}, build ${state.build})`)
     console.log(`Paired:     ${state.paired ? 'yes' : 'no (open the extension popup and tap the power button)'}`)
     console.log(`Connected:  ${state.extensionConnected ? 'yes' : 'no (Chrome closed, or the power button is off)'}`)
+    console.log(`Writing:    ${writingState(state)}`)
   } else {
     console.log(`Bridge:     not running at ${BRIDGE_BASE} (start it with: monday-bridge start)`)
   }

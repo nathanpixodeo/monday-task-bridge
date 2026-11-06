@@ -11,9 +11,12 @@ import {
   codexRulesState,
 } from '../bridge/approval.js'
 
-test('read rules never cover monday_write_back', () => {
-  assert.ok(!(READ_TOOLS as readonly string[]).includes('monday_write_back'))
-  assert.ok(claudeRules.every((rule) => !rule.includes('write_back')))
+test('read rules never cover a write tool', () => {
+  for (const tool of ['monday_write_back', 'monday_add_update', 'monday_update_item', 'monday_create_item', 'monday_move_item']) {
+    assert.ok(!(READ_TOOLS as readonly string[]).includes(tool), tool)
+    assert.ok(claudeRules.every((rule) => !rule.endsWith(tool)), tool)
+    assert.ok(agyRules.every((rule) => !rule.includes(tool)), tool)
+  }
   assert.equal(claudeRules[0], 'mcp__monday-task-bridge__monday_read_task')
   assert.equal(agyRules[0], 'mcp(monday-task-bridge/monday_read_task)')
 })

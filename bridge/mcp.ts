@@ -6,11 +6,18 @@
  *   monday_read_task        – capture any task by URL or board+item ID
  *   monday_list_assigned_tasks – list tasks assigned to the signed-in user (live, not stored)
  *   monday_list_boards      – list the boards the user can be assigned on, to read one at a time
+ *   monday_add_update       – add an update to an item, or reply to one of its updates
+ *   monday_update_item      – set column values: status, tags, people, dates, text, numbers, ...
+ *   monday_create_item      – create an item on a board, or a subitem under an item
+ *   monday_move_item        – move an item to another group
  *   monday_write_back       – add an update (and set the status) on one item; only with MONDAY_BRIDGE_ALLOW_WRITE=1
  *   monday_get_task         – retrieve stored snapshot (optional boardId/itemId)
  *   monday_get_image        – return original image bytes as ImageContent
  *   monday_list_tasks       – list stored snapshots
  *   monday_bridge_status    – bridge health/connection status
+ *
+ * The four agent writes are always listed, but run only while "Allow writing" is on in the extension popup; otherwise
+ * they return WRITE_DISABLED. The bridge and the extension both check the switch.
  *
  * The HTTP bridge is started automatically (detached) when a tool needs it and it is not
  * running; tools that only read the local store never start it.
@@ -97,19 +104,30 @@ function snapshotSummary(s: StoredSnapshot): object {
 
 const mcp = new McpServer({
   name: 'monday-task-bridge',
-  version: '0.3.0',
+  version: '0.4.0',
 })
+
+/**
+ * The name the MCP client gave itself when it connected, such as "claude-code", sent along so the extension popup can
+ * show which agent read a task. Only printable ASCII fits in a header, so anything else is left out.
+ */
+function agentName(): string | undefined {
+  const name = mcp.server.getClientVersion()?.name?.trim()
+  return name && name.length <= 64 && /^[\x20-\x7E]+$/.test(name) ? name : undefined
+}
 
 /** POST a live-read request to the bridge, which relays it to the connected extension. */
 async function captureVia(path: string, body?: unknown, failureMessage = 'Failed to capture task') {
   try {
     await bridgeReady()
     const adminToken = await getAdminToken()
+    const agent = agentName()
     const res = await bridgeFetch(path, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Bridge-Admin-Token': adminToken,
+        ...(agent ? { 'X-Bridge-Agent': agent } : {}),
       },
       body: JSON.stringify(body ?? {}),
     })
@@ -120,6 +138,12 @@ async function captureVia(path: string, body?: unknown, failureMessage = 'Failed
       if (errCode === 'BROWSER_OFFLINE') {
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ error: 'BROWSER_OFFLINE', message: 'No browser extension is connected. Ensure the Monday Task Bridge extension is running.' }) }],
+          isError: true,
+        }
+      }
+      if (errCode.startsWith('WRITE_DISABLED')) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'WRITE_DISABLED', message: errCode.replace(/^WRITE_DISABLED:\s*/, '') }) }],
           isError: true,
         }
       }
@@ -205,6 +229,101 @@ mcp.tool(
   },
   async ({ accountHost }) =>
     captureVia('/v1/list-assigned-tasks', { accountHost, boardsOnly: true }, 'Failed to list boards')
+)
+
+// -- Agent writes -----------------------------------------------------------
+
+const WRITES_NOTE =
+  ' This WRITES to monday.com as the signed-in user, and works only while "Allow writing" is on in the Monday Task ' +
+  'Bridge extension popup; otherwise it returns WRITE_DISABLED: ask the user to turn it on. ' +
+  'Requires Chrome running with the extension connected (power on).'
+
+const accountHostArg = z.string().optional()
+  .describe('e.g. team.monday.com; defaults to the host of an open monday tab, then of the latest cached task')
+
+const columnInput = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  z.array(z.string()),
+  z.object({ add: z.array(z.string()).optional(), remove: z.array(z.string()).optional() }).strict(),
+  z.object({ from: z.string(), to: z.string() }).strict(),
+  z.object({ url: z.string(), text: z.string().optional() }).strict(),
+])
+
+const columnsArg = z.record(z.string(), columnInput).describe(
+  'Column values keyed by column title (case does not matter) or column id. ' +
+    'Status: a label such as "Done". Tags: tag names (replaces the list) or {add, remove}. ' +
+    'People: emails, full names or "me" (replaces the list) or {add, remove}. ' +
+    'Date: "YYYY-MM-DD" or "YYYY-MM-DD HH:mm". Timeline: {from, to}. Numbers: a number. ' +
+    'Text, long text, and Name (renames the item): a string. Checkbox: true or false. Dropdown: labels. ' +
+    'Link: a URL or {url, text}. null clears a column.'
+)
+
+const createFlags = {
+  createMissingLabels: z.boolean().optional()
+    .describe('Create a status or dropdown label the board does not have yet, instead of failing'),
+  createMissingTags: z.boolean().optional()
+    .describe('Create a tag that does not exist yet, instead of failing'),
+}
+
+const writeVia = (body: Record<string, unknown>) => captureVia('/v1/write', body, 'Failed to write to monday')
+
+mcp.tool(
+  'monday_add_update',
+  'Add an update (a comment) to one monday item, or reply to one of its updates with replyToUpdateId. ' +
+    'The text is posted as written; line breaks are kept.' + WRITES_NOTE,
+  {
+    accountHost: accountHostArg,
+    boardId: z.string().describe('The board of the item'),
+    itemId: z.string().describe('The item to write to'),
+    body: z.string().describe('The text of the update'),
+    replyToUpdateId: z.string().optional().describe('An update on this item to reply to, instead of adding a new update'),
+  },
+  async (args) => writeVia({ op: 'add-update', ...args })
+)
+
+mcp.tool(
+  'monday_update_item',
+  'Set column values on one monday item in a single change: status, tags, people, dates, timeline, numbers, text, ' +
+    'checkbox, dropdown, link, or its name.' + WRITES_NOTE,
+  {
+    accountHost: accountHostArg,
+    boardId: z.string().describe('The board of the item'),
+    itemId: z.string().describe('The item to change'),
+    columns: columnsArg,
+    ...createFlags,
+  },
+  async (args) => writeVia({ op: 'update-item', ...args })
+)
+
+mcp.tool(
+  'monday_create_item',
+  'Create an item on a monday board, or a subitem under an item with parentItemId, and optionally set its columns. ' +
+    'Returns the new item\'s id and board (a subitem lives on its own subitems board).' + WRITES_NOTE,
+  {
+    accountHost: accountHostArg,
+    boardId: z.string().describe('The board to create the item on, or the board of the parent item'),
+    name: z.string().describe('The name of the new item'),
+    parentItemId: z.string().optional().describe('Create a subitem under this item instead of an item on the board'),
+    group: z.string().optional().describe("The group's title or id; the board's top group without it. Not used with parentItemId"),
+    columns: columnsArg.optional(),
+    ...createFlags,
+  },
+  async (args) => writeVia({ op: 'create-item', ...args })
+)
+
+mcp.tool(
+  'monday_move_item',
+  'Move one monday item to another group on its board.' + WRITES_NOTE,
+  {
+    accountHost: accountHostArg,
+    boardId: z.string().describe('The board of the item'),
+    itemId: z.string().describe('The item to move'),
+    group: z.string().describe("The group's title or id"),
+  },
+  async (args) => writeVia({ op: 'move-item', ...args })
 )
 
 // -- monday_write_back ------------------------------------------------------

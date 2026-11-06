@@ -27,7 +27,7 @@ export class WriteBackTargetError extends Error {
   }
 }
 
-interface ApiColumn {
+export interface ApiColumn {
   id: string
   title: string
   type: string
@@ -51,10 +51,10 @@ function isColumn(value: unknown): value is ApiColumn {
   return !!column && typeof column.id === 'string' && typeof column.title === 'string' && typeof column.type === 'string'
 }
 
-const idOf = (value: unknown): string | null =>
+export const idOf = (value: unknown): string | null =>
   typeof value === 'string' && /^\d{1,20}$/.test(value) ? value : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : null
 
-function readItem(data: unknown): { boardId: string; columns: ApiColumn[] } | null {
+export function readItem(data: unknown): { boardId: string; columns: ApiColumn[] } | null {
   const items = (data as { items?: unknown } | null)?.items
   if (!Array.isArray(items) || items.length === 0) return null
   const board = (items[0] as { board?: { id?: unknown; columns?: unknown } | null } | null)?.board

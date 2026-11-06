@@ -291,6 +291,78 @@ export const AssignedTasksPayloadSchema = z.object({
   }),
 })
 
+// ─── Agent writes ("Allow writing" on in the extension popup) ─────────
+
+const ItemIdSchema = z.string().regex(/^\d{1,20}$/)
+const AccountHostSchema = z.string().regex(MONDAY_HOST_RE).refine((host) => !NON_ACCOUNT_HOSTS.has(host.toLowerCase()), 'Not a monday account host')
+const NameListSchema = z.array(z.string().trim().min(1).max(256)).max(100)
+
+/** One column's value as an agent gives it; the extension turns it into the JSON monday takes for the column's type. */
+export const ColumnInputSchema = z.union([
+  z.string().max(10_000),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  NameListSchema,
+  z.object({ add: NameListSchema.optional(), remove: NameListSchema.optional() }).strict(),
+  z.object({ from: z.string().max(32), to: z.string().max(32) }).strict(),
+  z.object({ url: z.string().max(2048), text: z.string().max(1000).optional() }).strict(),
+])
+
+const ColumnInputsSchema = z.record(z.string().trim().min(1).max(256), ColumnInputSchema)
+  .refine((columns) => Object.keys(columns).length >= 1 && Object.keys(columns).length <= 50, 'Give 1 to 50 columns')
+const GroupKeySchema = z.string().trim().min(1).max(256)
+const CreateFlags = { createMissingLabels: z.boolean().optional(), createMissingTags: z.boolean().optional() }
+
+export const WriteBodySchema = z.discriminatedUnion('op', [
+  z.object({
+    op: z.literal('add-update'),
+    accountHost: AccountHostSchema.optional(),
+    boardId: ItemIdSchema,
+    itemId: ItemIdSchema,
+    body: z.string().trim().min(1).max(20_000),
+    replyToUpdateId: ItemIdSchema.optional(),
+  }).strict(),
+  z.object({
+    op: z.literal('update-item'),
+    accountHost: AccountHostSchema.optional(),
+    boardId: ItemIdSchema,
+    itemId: ItemIdSchema,
+    columns: ColumnInputsSchema,
+    ...CreateFlags,
+  }).strict(),
+  z.object({
+    op: z.literal('create-item'),
+    accountHost: AccountHostSchema.optional(),
+    boardId: ItemIdSchema,
+    name: z.string().trim().min(1).max(255),
+    parentItemId: ItemIdSchema.optional(),
+    group: GroupKeySchema.optional(),
+    columns: ColumnInputsSchema.optional(),
+    ...CreateFlags,
+  }).strict(),
+  z.object({
+    op: z.literal('move-item'),
+    accountHost: AccountHostSchema.optional(),
+    boardId: ItemIdSchema,
+    itemId: ItemIdSchema,
+    group: GroupKeySchema,
+  }).strict(),
+]).refine((body) => !(body.op === 'create-item' && body.parentItemId !== undefined && body.group !== undefined), {
+  message: 'A subitem goes under its parent item: parentItemId and group cannot be combined',
+})
+
+export const WriteResultSchema = z.object({
+  op: z.enum(['add-update', 'update-item', 'create-item', 'move-item']),
+  accountHost: z.string().regex(MONDAY_HOST_RE),
+  boardId: ItemIdSchema,
+  itemId: ItemIdSchema,
+  updateId: ItemIdSchema.optional(),
+  columnsSet: z.array(z.string().max(256)).max(50).optional(),
+  group: z.object({ id: MondayKeySchema, title: z.string().max(1000) }).strict().optional(),
+  created: z.array(z.string().max(300)).max(100).optional(),
+}).strict()
+
 /** 5000 tasks with their column texts stay well under this. */
 export const MAX_ASSIGNED_TASKS_BYTES = 64 * 1024 * 1024
 

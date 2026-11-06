@@ -6,7 +6,7 @@ Tác giả: **Nhat Nguyen** · Phát triển bởi **Nexkit** · [nathanpixodeo@
 
 *Đây là bản dịch của README tiếng Anh. Nếu hai bản có chỗ khác nhau, README tiếng Anh là bản chuẩn.*
 
-Cho phép một AI agent (Claude Code, Codex, agy hoặc bất kỳ MCP client nào) đọc task trên monday.com, kèm các update (bình luận trên task) và ảnh gốc, thông qua **Chrome đã đăng nhập của bạn**. Bạn không cần monday API token, không cần app do admin cài, cũng không cần gói monday MCP: chỉ cần đăng nhập monday trong Chrome một lần, extension lo phần còn lại.
+Cho phép một AI agent (Claude Code, Codex, agy hoặc bất kỳ MCP client nào) đọc task trên monday.com, kèm các update (bình luận trên task) và ảnh gốc, thông qua **Chrome đã đăng nhập của bạn**. Khi bạn bật quyền ghi, agent còn làm việc trên task được: viết update, đổi status, tags và các cột khác, tạo subitem. Bạn không cần monday API token, không cần app do admin cài, cũng không cần gói monday MCP: chỉ cần đăng nhập monday trong Chrome một lần, extension lo phần còn lại.
 
 Dự án gồm hai phần, đều chạy trên máy tính của bạn:
 
@@ -167,7 +167,7 @@ monday-bridge approval manual    # hỏi trước mỗi lần đọc
 monday-bridge approval status    # hiện chế độ của từng CLI
 ```
 
-`auto` chỉ áp dụng cho các tool đọc. `monday_write_back` luôn hỏi. Lệnh này ghi các quy tắc dưới đây, và `manual` gỡ chúng đi:
+`auto` chỉ áp dụng cho các tool đọc. Các tool ghi luôn hỏi. Lệnh này ghi các quy tắc dưới đây, và `manual` gỡ chúng đi:
 
 | CLI | Tệp | Quy tắc cho mỗi tool đọc |
 | --- | --- | --- |
@@ -192,7 +192,22 @@ monday-bridge approval status    # hiện chế độ của từng CLI
 
 Một luồng làm việc điển hình của agent: gọi `monday_read_task` với link task, đọc `complete` và `warnings`, rồi gọi `monday_get_image` cho từng tệp đính kèm cần xem.
 
-Các tool chỉ đọc. Ngoại lệ duy nhất là `monday_write_back`: tool này thêm một update vào item và có thể đặt cột Status của item. Agent không bao giờ thấy tool này, trừ khi MCP client của nó khởi động server với `MONDAY_BRIDGE_ALLOW_WRITE=1`. Trình cài đặt không đặt biến này.
+### Ghi lên monday
+
+Quyền ghi tắt cho tới khi bạn bật. Mở popup của extension và bật **Allow writing** (cho phép ghi). Khi đó agent ghi dưới tên bạn: monday hiện tên bạn trên mọi thứ agent thêm vào. Bạn có thể tắt bất cứ lúc nào. Thay đổi có hiệu lực ngay, không cần khởi động lại agent. Unpair cũng tắt quyền ghi.
+
+| MCP tool | Kết quả |
+| --- | --- |
+| `monday_add_update` | Thêm một update vào item, hoặc reply một update của item (`replyToUpdateId`). |
+| `monday_update_item` | Đổi nhiều cột trong một lần, theo tên hoặc id cột: label status, tags (một danh sách, hoặc `{add, remove}`), people (email, họ tên đầy đủ, hoặc `"me"`; một danh sách, hoặc `{add, remove}`), ngày `YYYY-MM-DD` hoặc `YYYY-MM-DD HH:mm`, timeline `{from, to}`, số, text, long text, checkbox, label dropdown, link, hoặc tên item. `null` xoá giá trị cột. |
+| `monday_create_item` | Tạo item trong một group (theo tên hoặc id), hoặc tạo subitem dưới `parentItemId`, và có thể đặt các cột của nó. |
+| `monday_move_item` | Chuyển item sang group khác (theo tên hoặc id). |
+
+Không có gì bị xoá hay archive. Tag chưa có chỉ được tạo khi agent truyền `createMissingTags`. Label status hoặc dropdown chưa có chỉ được tạo khi agent truyền `createMissingLabels`. Không lần ghi nào được thử lại.
+
+Agent luôn thấy bốn tool này. Khi công tắc tắt, các tool trả về `WRITE_DISABLED`, và agent nên nhờ bạn bật quyền ghi. Cả bridge và extension đều kiểm tra công tắc. `monday-bridge status` hiện trạng thái ở dòng `Writing:`. Agent CLI luôn hỏi trước mỗi lần ghi, kể cả ở chế độ duyệt `auto`.
+
+`monday_write_back` là tool riêng, dành cho Nexkit Agent Hub. Tool này thêm một update vào item và có thể đặt cột Status của item. Agent chỉ thấy tool này khi MCP client của nó khởi động server với `MONDAY_BRIDGE_ALLOW_WRITE=1`. Trình cài đặt không đặt biến này, và công tắc trong popup không áp dụng cho tool này.
 
 ## Popup của extension
 
@@ -202,9 +217,13 @@ Bấm **power button** để bật hoặc tắt kết nối. Khi kết nối t�
 | --- | --- |
 | `…` (tím) | Đang đọc một task, hoặc đang chờ duyệt pairing. |
 | `!` (đỏ) | Kết nối đang bật, nhưng bridge đang offline hoặc chưa kết nối. |
-| `!` (hổ phách) | Lần đọc gần nhất chưa đầy đủ. Mở popup để đọc các cảnh báo. |
+| `!` (hổ phách) | Lần đọc gần nhất chưa đầy đủ. Mở **History** (lịch sử) trong popup để đọc các cảnh báo. |
 | `+` (hổ phách) | Một host chứa ảnh cần được cấp quyền. |
 | không có | Đã kết nối (biểu tượng màu), hoặc đã tắt hay chưa pair (biểu tượng xám). |
+
+Công tắc **Allow writing** nằm dưới power button, cho phép agent sửa monday; xem [Ghi lên monday](#ghi-lên-monday). Công tắc mặc định tắt, và chuyển sang màu hổ phách khi bật.
+
+**Recent reads** (lần đọc gần đây) liệt kê ba task agent đọc gần nhất: agent nào đọc, lúc nào, và lần đọc có đầy đủ không. **History** mở mười lần đọc gần nhất, kèm cảnh báo của mỗi lần đọc chưa đầy đủ. Bấm vào một task để mở nó trên monday. Tên agent là tên mà MCP client của nó khai báo, ví dụ Claude Code, Codex hoặc agy; client không khai báo tên thì hiện là "Unknown agent".
 
 ## Cách hoạt động
 
