@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { READ_TOOLS } from '../bridge/approval.js'
 import { Store } from '../bridge/store.js'
 import type { TaskSnapshot } from '../shared/types.js'
 
@@ -39,6 +40,10 @@ test('MCP exposes cached task and original image with no monday API token', { ti
     const tools = await client.listTools()
     assert.ok(tools.tools.some(tool => tool.name === 'monday_get_task'))
     assert.ok(tools.tools.some(tool => tool.name === 'monday_get_image'))
+
+    // Exactly the tools approval mode allows are marked read-only: Claude Code's plan mode runs only those
+    const readOnly = tools.tools.filter(tool => tool.annotations?.readOnlyHint === true).map(tool => tool.name)
+    assert.deepEqual(readOnly.sort(), [...READ_TOOLS].sort())
 
     const task = await client.callTool({ name: 'monday_get_task', arguments: {} })
     assert.equal(task.isError, undefined)

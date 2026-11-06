@@ -175,6 +175,8 @@ monday-bridge approval status    # show the mode of each CLI
 
 `MONDAY_BRIDGE_CLIENTS` limits the CLIs the command changes. For another Claude Code profile, set `CLAUDE_CONFIG_DIR` first, as for the installer.
 
+The read tools are also marked read-only (`readOnlyHint`). In plan mode, Claude Code asks before any MCP tool that is not marked read-only, even when an allow rule covers it. With the mark, monday reads run in plan mode without a prompt too.
+
 ## What your agent can do
 
 | MCP tool | Result |
@@ -262,7 +264,7 @@ The bridge log is `bridge.log` in that folder. `MONDAY_BRIDGE_DATA_DIR` moves th
 - **The agent does not list the monday tools:** Restart the agent session after installing.
 - **`monday-bridge` is not recognized / command not found:** Run the install command again. If it still fails, check that the folder printed by `npm config get prefix` (on macOS/Linux, its `bin` subfolder) is on your PATH, then open a new terminal.
 - **`monday-bridge.ps1 cannot be loaded because running scripts is disabled`:** PowerShell blocks npm's script shims. Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or type `monday-bridge.cmd` instead of `monday-bridge`.
-- **The agent still asks before each monday read:** Run `monday-bridge approval status`; it must say `auto` for that CLI. Then restart the agent session. In Codex, re-registering the server with `codex mcp remove` and `codex mcp add` drops the rules; run `auto` again.
+- **The agent still asks before each monday read:** Run `monday-bridge approval status`; it must say `auto` for that CLI. Then restart the agent session. In Codex, re-registering the server with `codex mcp remove` and `codex mcp add` drops the rules; run `auto` again. If Claude Code asks only in plan mode, the MCP server predates the read-only mark: update, then reconnect `monday-task-bridge` with `/mcp` or restart the session.
 
 ### Reading tasks
 

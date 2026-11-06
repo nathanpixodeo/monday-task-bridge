@@ -116,6 +116,13 @@ function agentName(): string | undefined {
   return name && name.length <= 64 && /^[\x20-\x7E]+$/.test(name) ? name : undefined
 }
 
+/**
+ * Marks a tool that changes nothing in monday. Claude Code runs such a tool in plan mode, where it refuses or asks
+ * for any other MCP tool even when an allow rule covers it, and Codex runs it without asking.
+ * Every tool in READ_TOOLS (approval.ts) carries it; the writes never do.
+ */
+const READ_ONLY = { readOnlyHint: true } as const
+
 /** POST a live-read request to the bridge, which relays it to the connected extension. */
 async function captureVia(path: string, body?: unknown, failureMessage = 'Failed to capture task') {
   try {
@@ -179,6 +186,7 @@ mcp.tool(
   'Request the browser extension to capture the currently open Monday.com task. ' +
     'Sends a capture request over WebSocket, waits up to 180s, and returns the snapshot.',
   {},
+  READ_ONLY,
   async () => captureVia('/v1/read-open-task')
 )
 
@@ -195,6 +203,7 @@ mcp.tool(
     itemId: z.string().optional().describe('Monday.com item ID'),
     accountHost: z.string().optional().describe('e.g. team.monday.com; defaults to the host of the latest cached task'),
   },
+  READ_ONLY,
   async ({ url, boardId, itemId, accountHost }) =>
     captureVia('/v1/read-task', { url, boardId, itemId, accountHost })
 )
@@ -213,6 +222,7 @@ mcp.tool(
     accountHost: z.string().optional().describe('e.g. team.monday.com; defaults to the host of an open monday tab, then of the latest cached task'),
     boardIds: z.array(z.string()).optional().describe('Read only these boards (ids from monday_list_boards); every active board without it'),
   },
+  READ_ONLY,
   async ({ accountHost, boardIds }) =>
     captureVia('/v1/list-assigned-tasks', { accountHost, boardIds }, 'Failed to list assigned tasks')
 )
@@ -227,6 +237,7 @@ mcp.tool(
   {
     accountHost: z.string().optional().describe('e.g. team.monday.com; defaults to the host of an open monday tab, then of the latest cached task'),
   },
+  READ_ONLY,
   async ({ accountHost }) =>
     captureVia('/v1/list-assigned-tasks', { accountHost, boardsOnly: true }, 'Failed to list boards')
 )
@@ -358,6 +369,7 @@ mcp.tool(
     boardId: z.string().optional().describe('Monday.com board ID'),
     itemId: z.string().optional().describe('Monday.com item ID'),
   },
+  READ_ONLY,
   async ({ boardId, itemId }) => {
     try {
       await store.init()
@@ -405,6 +417,7 @@ mcp.tool(
   {
     imageId: z.string().describe('Image upload ID from the snapshot'),
   },
+  READ_ONLY,
   async ({ imageId }) => {
     try {
       await store.init()
@@ -446,6 +459,7 @@ mcp.tool(
   'monday_list_tasks',
   'List all stored Monday.com task snapshots with summary information.',
   {},
+  READ_ONLY,
   async () => {
     try {
       await store.init()
@@ -478,6 +492,7 @@ mcp.tool(
   'monday_bridge_status',
   'Check the status of the Monday Task Bridge server and extension connection.',
   {},
+  READ_ONLY,
   async () => {
     try {
       await bridgeReady()

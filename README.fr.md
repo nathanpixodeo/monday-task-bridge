@@ -177,6 +177,8 @@ monday-bridge approval status    # afficher le mode de chaque CLI
 
 `MONDAY_BRIDGE_CLIENTS` limite les CLI que la commande modifie. Pour un autre profil Claude Code, définissez d'abord `CLAUDE_CONFIG_DIR`, comme pour l'installeur.
 
+Les outils de lecture sont aussi marqués en lecture seule (`readOnlyHint`). En mode plan, Claude Code demande une confirmation avant tout outil MCP qui n'est pas marqué en lecture seule, même si une règle d'autorisation le couvre. Grâce à cette marque, les lectures monday s'exécutent aussi sans confirmation en mode plan.
+
 ## Ce que votre agent peut faire
 
 | Outil MCP | Résultat |
@@ -264,7 +266,7 @@ Le journal du bridge est `bridge.log`, dans ce dossier. `MONDAY_BRIDGE_DATA_DIR`
 - **L'agent ne liste pas les outils monday :** redémarrez la session de l'agent après l'installation.
 - **`monday-bridge` is not recognized / command not found (commande non reconnue ou introuvable) :** relancez la commande d'installation. Si l'erreur persiste, vérifiez que le dossier affiché par `npm config get prefix` (sous macOS/Linux, son sous-dossier `bin`) figure dans votre PATH, puis ouvrez un nouveau terminal.
 - **`monday-bridge.ps1 cannot be loaded because running scripts is disabled` (l'exécution des scripts est désactivée) :** PowerShell bloque les scripts d'appel (shims) de npm. Lancez une fois `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, ou tapez `monday-bridge.cmd` au lieu de `monday-bridge`.
-- **L'agent demande encore une confirmation avant chaque lecture monday :** lancez `monday-bridge approval status` ; la commande doit indiquer `auto` pour cette CLI. Redémarrez ensuite la session de l'agent. Dans Codex, réenregistrer le serveur avec `codex mcp remove` puis `codex mcp add` supprime les règles ; relancez `auto`.
+- **L'agent demande encore une confirmation avant chaque lecture monday :** lancez `monday-bridge approval status` ; la commande doit indiquer `auto` pour cette CLI. Redémarrez ensuite la session de l'agent. Dans Codex, réenregistrer le serveur avec `codex mcp remove` puis `codex mcp add` supprime les règles ; relancez `auto`. Si Claude Code demande uniquement en mode plan, le serveur MCP est antérieur à la marque de lecture seule : mettez à jour, puis reconnectez `monday-task-bridge` avec `/mcp` ou redémarrez la session.
 
 ### Lire les tâches
 

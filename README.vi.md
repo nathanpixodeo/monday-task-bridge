@@ -177,6 +177,8 @@ monday-bridge approval status    # hiện chế độ của từng CLI
 
 `MONDAY_BRIDGE_CLIENTS` giới hạn các CLI mà lệnh này thay đổi. Với một profile Claude Code khác, hãy đặt `CLAUDE_CONFIG_DIR` trước, giống như với trình cài đặt.
 
+Các tool đọc còn được đánh dấu chỉ đọc (`readOnlyHint`). Ở plan mode, Claude Code hỏi trước mọi MCP tool không được đánh dấu chỉ đọc, kể cả khi đã có quy tắc cho phép. Nhờ dấu này, các lần đọc monday cũng chạy không cần hỏi ở plan mode.
+
 ## Agent của bạn làm được gì
 
 | MCP tool | Kết quả |
@@ -264,7 +266,7 @@ Log của bridge là tệp `bridge.log` trong thư mục đó. `MONDAY_BRIDGE_DA
 - **Agent không liệt kê các tool monday:** Khởi động lại phiên agent sau khi cài đặt.
 - **`monday-bridge` is not recognized / command not found (không nhận ra lệnh / không tìm thấy lệnh):** Chạy lại lệnh cài đặt. Nếu vẫn lỗi, kiểm tra xem thư mục mà `npm config get prefix` in ra (trên macOS/Linux là thư mục con `bin` của nó) đã nằm trong PATH chưa, rồi mở một terminal mới.
 - **`monday-bridge.ps1 cannot be loaded because running scripts is disabled` (không tải được `monday-bridge.ps1` vì việc chạy script đang bị tắt):** PowerShell chặn các script shim của npm. Chạy `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` một lần, hoặc gõ `monday-bridge.cmd` thay cho `monday-bridge`.
-- **Agent vẫn hỏi trước mỗi lần đọc monday:** Chạy `monday-bridge approval status`; kết quả phải là `auto` cho CLI đó. Sau đó khởi động lại phiên agent. Trong Codex, việc đăng ký lại server bằng `codex mcp remove` và `codex mcp add` làm mất các quy tắc; hãy chạy lại `auto`.
+- **Agent vẫn hỏi trước mỗi lần đọc monday:** Chạy `monday-bridge approval status`; kết quả phải là `auto` cho CLI đó. Sau đó khởi động lại phiên agent. Trong Codex, việc đăng ký lại server bằng `codex mcp remove` và `codex mcp add` làm mất các quy tắc; hãy chạy lại `auto`. Nếu Claude Code chỉ hỏi ở plan mode, MCP server là bản cũ chưa có dấu chỉ đọc: hãy cập nhật, rồi kết nối lại `monday-task-bridge` bằng `/mcp` hoặc khởi động lại phiên.
 
 ### Đọc task
 
