@@ -33,7 +33,7 @@ export interface ApiColumn {
   type: string
 }
 
-const escapeHtml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+export const escapeHtml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 /** monday shows an update's body as HTML: the text is escaped and its lines are kept. */
 export function updateBody(comment: string): string {

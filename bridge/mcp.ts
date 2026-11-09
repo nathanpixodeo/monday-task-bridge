@@ -284,13 +284,16 @@ const writeVia = (body: Record<string, unknown>) => captureVia('/v1/write', body
 mcp.tool(
   'monday_add_update',
   'Add an update (a comment) to one monday item, or reply to one of its updates with replyToUpdateId. ' +
-    'The text is posted as written; line breaks are kept.' + WRITES_NOTE,
+    'The text is posted as written; line breaks are kept. To tag (mention) people, list them in mentions: each is ' +
+    'notified, and the tag goes where the body writes "@Their Full Name", else at the start of the update.' + WRITES_NOTE,
   {
     accountHost: accountHostArg,
     boardId: z.string().describe('The board of the item'),
     itemId: z.string().describe('The item to write to'),
     body: z.string().describe('The text of the update'),
     replyToUpdateId: z.string().optional().describe('An update on this item to reply to, instead of adding a new update'),
+    mentions: z.array(z.string()).optional()
+      .describe('People to tag in the update: "me", user ids, emails, or full names (a name must match exactly one user)'),
   },
   async (args) => writeVia({ op: 'add-update', ...args })
 )

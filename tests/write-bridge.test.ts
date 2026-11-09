@@ -86,6 +86,7 @@ test('the bridge relays an agent write only while "Allow writing" is on, and the
       { ...update, columns: { Status: { label: 'Done' } } },
       { ...update, extra: true },
       { op: 'add-update', boardId: '123', itemId: '456', body: '  ' },
+      { op: 'add-update', boardId: '123', itemId: '456', body: 'Hi', mentions: ['  '] },
       { op: 'create-item', boardId: '123', name: 'x', parentItemId: '456', group: 'Done' },
       { op: 'move-item', boardId: '123', itemId: '456' }
     ]) {

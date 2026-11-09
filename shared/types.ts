@@ -130,7 +130,15 @@ export type ColumnInputs = Record<string, ColumnInput>
 
 /** What an agent asks to write to monday while "Allow writing" is on in the extension popup. */
 export type WriteRequest = { accountHost?: string } & (
-  | { op: 'add-update'; boardId: string; itemId: string; body: string; replyToUpdateId?: string }
+  | {
+      op: 'add-update'
+      boardId: string
+      itemId: string
+      body: string
+      replyToUpdateId?: string
+      /** People to tag in the update: "me", user ids, emails or full names. */
+      mentions?: string[]
+    }
   | {
       op: 'update-item'
       boardId: string
@@ -162,6 +170,8 @@ export interface WriteResult {
   itemId: string
   /** The update added, for add-update. */
   updateId?: string
+  /** The names of the people tagged in the update, for add-update. */
+  mentioned?: string[]
   /** The titles of the columns set, for update-item and create-item. */
   columnsSet?: string[]
   /** The group the item is in now, for move-item and create-item. */

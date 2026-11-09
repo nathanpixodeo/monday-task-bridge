@@ -322,6 +322,7 @@ export const WriteBodySchema = z.discriminatedUnion('op', [
     itemId: ItemIdSchema,
     body: z.string().trim().min(1).max(20_000),
     replyToUpdateId: ItemIdSchema.optional(),
+    mentions: NameListSchema.optional(),
   }).strict(),
   z.object({
     op: z.literal('update-item'),
@@ -358,6 +359,7 @@ export const WriteResultSchema = z.object({
   boardId: ItemIdSchema,
   itemId: ItemIdSchema,
   updateId: ItemIdSchema.optional(),
+  mentioned: z.array(z.string().max(300)).max(100).optional(),
   columnsSet: z.array(z.string().max(256)).max(50).optional(),
   group: z.object({ id: MondayKeySchema, title: z.string().max(1000) }).strict().optional(),
   created: z.array(z.string().max(300)).max(100).optional(),

@@ -7,7 +7,7 @@
 
 import type { ColumnInput, ColumnInputs, WriteRequest, WriteResult } from '../../shared/types'
 import type { Graphql } from './assigned-tasks'
-import { idOf, readItem, updateBody } from './write-back'
+import { escapeHtml, idOf, readItem, updateBody } from './write-back'
 import type { ApiColumn } from './write-back'
 
 const ITEM_QUERY = `query WriteItem($ids: [ID!]) {
@@ -23,8 +23,9 @@ const UPDATE_QUERY = `query WriteUpdateOf($ids: [ID!]) {
   updates(ids: $ids) { id item_id }
 }`
 
-const ADD_UPDATE = `mutation WriteAddUpdate($itemId: ID!, $body: String!, $parentId: ID) {
-  create_update(item_id: $itemId, body: $body, parent_id: $parentId) { id }
+// A non-null list element fits both an [UpdateMention] and an [UpdateMention!] argument
+const ADD_UPDATE = `mutation WriteAddUpdate($itemId: ID!, $body: String!, $parentId: ID, $mentions: [UpdateMention!]) {
+  create_update(item_id: $itemId, body: $body, parent_id: $parentId, mentions_list: $mentions) { id }
 }`
 
 const SET_COLUMNS = `mutation WriteColumns($boardId: ID!, $itemId: ID!, $values: JSON!, $createLabels: Boolean) {
@@ -48,6 +49,10 @@ const USERS_BY_EMAIL = `query WriteUsersByEmail($emails: [String!]) {
 
 const USERS_BY_NAME = `query WriteUsersByName($name: String) {
   users(name: $name) { id name email }
+}`
+
+const USERS_BY_ID = `query WriteUsersById($ids: [ID!]) {
+  users(ids: $ids) { id name }
 }`
 
 const GROUPS_QUERY = `query WriteGroups($boardIds: [ID!]) {
@@ -395,6 +400,53 @@ async function setColumns(graphql: Graphql, host: string, item: TargetItem, colu
   return { titles, created: lookups.created }
 }
 
+// ─── Mentions ────────────────────────────────────────────────────────
+
+interface Person {
+  id: string
+  name: string
+}
+
+/** The people to tag in an update, with their names; resolved like a people column, each one once. */
+async function mentionedPeople(graphql: Graphql, host: string, boardId: string, entries: string[]): Promise<Person[]> {
+  const ids = [...new Set(await new Lookups(graphql, host, boardId, {}).personIds(entries))].map(String)
+  const data = await graphql(host, USERS_BY_ID, { ids })
+  const names = new Map<string, string>()
+  for (const user of ((data as { users?: unknown } | null)?.users as unknown[] | undefined) ?? []) {
+    const id = isRecord(user) ? idOf(user.id) : null
+    if (id !== null && typeof (user as { name?: unknown }).name === 'string') names.set(id, (user as { name: string }).name)
+  }
+  return ids.map((id) => {
+    const name = names.get(id)?.trim()
+    if (!name) throw new Error(`No monday user has the id ${id}`)
+    return { id, name }
+  })
+}
+
+/** The anchor monday's editor writes for a user mention; monday shows it as a tag. */
+const mentionAnchor = (host: string, person: Person) =>
+  `<a class="user_mention_editor router" href="https://${host}/users/${person.id}" data-mention-type="User" ` +
+  `data-mention-id="${person.id}" target="_blank" rel="noopener noreferrer">@${escapeHtml(person.name)}</a>`
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** Tags each person where the body writes "@Their Name"; people the body does not name are tagged at its start. */
+export function bodyWithMentions(host: string, html: string, people: Person[]): string {
+  // Longer names first, and a placeholder until the end, so "@An" never matches inside "@An Nguyen" or its tag
+  const placed = new Set<number>()
+  let body = html.replace(/\u0000/g, '')
+  const longestFirst = people.map((person, index) => ({ person, index })).sort((a, b) => b.person.name.length - a.person.name.length)
+  for (const { person, index } of longestFirst) {
+    const written = new RegExp(`@${escapeRegExp(escapeHtml(person.name))}(?![\\p{L}\\p{N}])`, 'giu')
+    const replaced = body.replace(written, `\u0000${index}\u0000`)
+    if (replaced !== body) placed.add(index)
+    body = replaced
+  }
+  body = body.replace(/\u0000(\d+)\u0000/g, (_, index: string) => mentionAnchor(host, people[Number(index)]))
+  const leading = people.filter((_, index) => !placed.has(index)).map((person) => mentionAnchor(host, person))
+  return leading.length ? `${leading.join(' ')} ${body}` : body
+}
+
 // ─── Writes ──────────────────────────────────────────────────────────
 
 /** Does one write an agent asked for; nothing is retried, so a failure is reported as it happened. */
@@ -409,13 +461,23 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
           throw new WriteTargetError(`Update ${request.replyToUpdateId} is not an update on item ${request.itemId}`)
         }
       }
+      // Every person is resolved before anything is written, so a name that matches no one stops the update
+      const people = request.mentions?.length ? await mentionedPeople(graphql, host, request.boardId, request.mentions) : []
       const created = await graphql(host, ADD_UPDATE, {
         itemId: request.itemId,
-        body: updateBody(request.body),
-        parentId: request.replyToUpdateId ?? null
+        body: bodyWithMentions(host, updateBody(request.body), people),
+        parentId: request.replyToUpdateId ?? null,
+        mentions: people.length ? people.map((person) => ({ id: person.id, type: 'User' })) : null
       })
       const updateId = idOf((created as { create_update?: { id?: unknown } | null } | null)?.create_update?.id)
-      return { op: request.op, accountHost: host, boardId: request.boardId, itemId: request.itemId, ...(updateId ? { updateId } : {}) }
+      return {
+        op: request.op,
+        accountHost: host,
+        boardId: request.boardId,
+        itemId: request.itemId,
+        ...(updateId ? { updateId } : {}),
+        ...(people.length ? { mentioned: people.map((person) => person.name) } : {})
+      }
     }
 
     case 'update-item': {

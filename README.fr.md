@@ -200,7 +200,7 @@ L'écriture est désactivée tant que vous ne l'activez pas. Ouvrez la popup de 
 
 | Outil MCP | Résultat |
 | --- | --- |
-| `monday_add_update` | Ajoute une mise à jour à un élément, ou répond à l'une de ses mises à jour (`replyToUpdateId`). |
+| `monday_add_update` | Ajoute une mise à jour à un élément, ou répond à l'une de ses mises à jour (`replyToUpdateId`). Mentionne des personnes avec `mentions` (`"me"`, ids, e-mails ou noms complets) : chacune reçoit une notification, et la mention se place là où le texte écrit `@Son Nom`, sinon au début. |
 | `monday_update_item` | Modifie des colonnes en une seule fois, par titre ou id de colonne : un libellé de statut, des tags (une liste, ou `{add, remove}`), des personnes (e-mails, noms complets ou `"me"` ; une liste, ou `{add, remove}`), une date `YYYY-MM-DD` ou `YYYY-MM-DD HH:mm`, une timeline `{from, to}`, des nombres, du texte, du texte long, une case à cocher, des libellés de liste déroulante, un lien, ou le nom de l'élément. `null` vide une colonne. |
 | `monday_create_item` | Crée un élément dans un groupe (par titre ou id), ou un sous-élément sous `parentItemId`, et peut remplir ses colonnes. |
 | `monday_move_item` | Déplace un élément vers un autre groupe (par titre ou id). |

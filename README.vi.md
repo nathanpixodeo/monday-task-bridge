@@ -200,7 +200,7 @@ Quyền ghi tắt cho tới khi bạn bật. Mở popup của extension và bậ
 
 | MCP tool | Kết quả |
 | --- | --- |
-| `monday_add_update` | Thêm một update vào item, hoặc reply một update của item (`replyToUpdateId`). |
+| `monday_add_update` | Thêm một update vào item, hoặc reply một update của item (`replyToUpdateId`). Tag người bằng `mentions` (`"me"`, id, email hoặc tên đầy đủ): mỗi người nhận thông báo, tag nằm ở chỗ nội dung viết `@Tên Người Đó`, nếu không thì ở đầu update. |
 | `monday_update_item` | Đổi nhiều cột trong một lần, theo tên hoặc id cột: label status, tags (một danh sách, hoặc `{add, remove}`), people (email, họ tên đầy đủ, hoặc `"me"`; một danh sách, hoặc `{add, remove}`), ngày `YYYY-MM-DD` hoặc `YYYY-MM-DD HH:mm`, timeline `{from, to}`, số, text, long text, checkbox, label dropdown, link, hoặc tên item. `null` xoá giá trị cột. |
 | `monday_create_item` | Tạo item trong một group (theo tên hoặc id), hoặc tạo subitem dưới `parentItemId`, và có thể đặt các cột của nó. |
 | `monday_move_item` | Chuyển item sang group khác (theo tên hoặc id). |

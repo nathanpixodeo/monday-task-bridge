@@ -68,7 +68,7 @@ test('adds an update with its text kept, and replies only to an update on the sa
 
   const added = await performWrite(fake.graphql, HOST, { op: 'add-update', boardId: '123', itemId: '456', body: 'Fixed <b>\nSee PR' })
   assert.deepEqual(added, { op: 'add-update', accountHost: HOST, boardId: '123', itemId: '456', updateId: '901' })
-  assert.deepEqual(fake.calls[1].variables, { itemId: '456', body: 'Fixed &lt;b&gt;<br>See PR', parentId: null })
+  assert.deepEqual(fake.calls[1].variables, { itemId: '456', body: 'Fixed &lt;b&gt;<br>See PR', parentId: null, mentions: null })
 
   const reply = await performWrite(fake.graphql, HOST, { op: 'add-update', boardId: '123', itemId: '456', body: 'Done', replyToUpdateId: '77' })
   assert.equal(reply.updateId, '901')
@@ -78,6 +78,65 @@ test('adds an update with its text kept, and replies only to an update on the sa
   await assert.rejects(
     performWrite(fake.graphql, HOST, { op: 'add-update', boardId: '123', itemId: '456', body: 'Done', replyToUpdateId: '78' }),
     WriteTargetError
+  )
+  assert.ok(!fake.names().slice(before).includes('WriteAddUpdate'))
+})
+
+const tagOf = (id: number, name: string) =>
+  `<a class="user_mention_editor router" href="https://${HOST}/users/${id}" data-mention-type="User" ` +
+  `data-mention-id="${id}" target="_blank" rel="noopener noreferrer">@${name}</a>`
+
+test('tags people in an update where the body names them, else at its start, and notifies each once', async () => {
+  const users = [
+    { id: 10, name: 'Me <Admin>', email: 'me@team.com' },
+    { id: 11, name: 'An', email: 'an@team.com' },
+    { id: 12, name: 'An Nguyen', email: 'an.nguyen@team.com' },
+    { id: 13, name: 'Lan Tran', email: 'lan@team.com' }
+  ]
+  const fake = fakeGraphql({
+    WriteItem: () => itemOn('123'),
+    WriteMe: () => ({ me: { id: '10' } }),
+    WriteUsersByEmail: (call) => ({ users: users.filter((user) => (call.variables.emails as string[]).includes(user.email)) }),
+    WriteUsersByName: (call) => ({ users: users.filter((user) => user.name.includes(call.variables.name as string)) }),
+    WriteUsersById: (call) => ({ users: users.filter((user) => (call.variables.ids as string[]).includes(String(user.id))) }),
+    WriteAddUpdate: () => ({ create_update: { id: 902 } })
+  })
+
+  const added = await performWrite(fake.graphql, HOST, {
+    op: 'add-update',
+    boardId: '123',
+    itemId: '456',
+    body: '@an nguyen and @An, see this.\n@Lan Trang is not Lan',
+    mentions: ['An Nguyen', 'an@team.com', 'me', '13', '11']
+  })
+  assert.deepEqual(added, {
+    op: 'add-update',
+    accountHost: HOST,
+    boardId: '123',
+    itemId: '456',
+    updateId: '902',
+    mentioned: ['An Nguyen', 'An', 'Me <Admin>', 'Lan Tran']
+  })
+  const sent = fake.calls.find((call) => call.query.includes('mutation WriteAddUpdate'))!.variables
+  assert.equal(
+    sent.body,
+    `${tagOf(10, 'Me &lt;Admin&gt;')} ${tagOf(13, 'Lan Tran')} ${tagOf(12, 'An Nguyen')} and ${tagOf(11, 'An')}, see this.<br>@Lan Trang is not Lan`
+  )
+  assert.deepEqual(sent.mentions, [
+    { id: '12', type: 'User' },
+    { id: '11', type: 'User' },
+    { id: '10', type: 'User' },
+    { id: '13', type: 'User' }
+  ])
+
+  const before = fake.calls.length
+  await assert.rejects(
+    performWrite(fake.graphql, HOST, { op: 'add-update', boardId: '123', itemId: '456', body: 'Hi', mentions: ['Nobody Here'] }),
+    /No monday user is named "Nobody Here"/
+  )
+  await assert.rejects(
+    performWrite(fake.graphql, HOST, { op: 'add-update', boardId: '123', itemId: '456', body: 'Hi', mentions: ['99'] }),
+    /No monday user has the id 99/
   )
   assert.ok(!fake.names().slice(before).includes('WriteAddUpdate'))
 })
