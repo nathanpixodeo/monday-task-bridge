@@ -84,10 +84,10 @@ test('the bridge relays a write-back to an extension that can write, and its ans
       assert.equal((await send(bad, adminHeaders)).status, 400, JSON.stringify(bad))
     }
 
-    // A write the extension made
-    const written = send({ ...body, statusLabel: 'Done' }, adminHeaders)
+    // A write the extension made; the agent's name comes along for the popup's activity log
+    const written = send({ ...body, statusLabel: 'Done' }, { ...adminHeaders, 'X-Bridge-Agent': 'claude-code' })
     const command = await extension.nextCommand()
-    assert.deepEqual(command, { type: 'write-back', requestId: command.requestId, ...body, statusLabel: 'Done' })
+    assert.deepEqual(command, { type: 'write-back', requestId: command.requestId, ...body, statusLabel: 'Done', agent: 'claude-code' })
     extension.ws.send(JSON.stringify({ type: 'write-back-result', requestId: command.requestId, result: { updateId: '901', statusSet: true } }))
     const response = await written
     assert.equal(response.status, 200)

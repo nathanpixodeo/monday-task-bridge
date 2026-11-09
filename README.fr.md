@@ -218,14 +218,14 @@ Le **power button** active et désactive la connexion. Quand il est désactivé,
 | Badge | Signification |
 | --- | --- |
 | `…` (violet) | Lecture d'une tâche en cours, ou attente de l'approbation de l'appairage. |
-| `!` (rouge) | La connexion est activée, mais le bridge est hors ligne ou non connecté. |
-| `!` (ambre) | La dernière lecture est incomplète. Ouvrez **History** (historique) dans la popup pour lire ses avertissements. |
+| `!` (rouge) | La connexion est activée, mais le bridge est hors ligne ou non connecté ; ou la dernière écriture a échoué. Ouvrez l'écriture dans **Activity** pour lire son erreur. |
+| `!` (ambre) | La dernière lecture est incomplète. Ouvrez la lecture dans **Activity** (activité) pour lire ses avertissements. |
 | `+` (ambre) | Un hôte d'images a besoin d'une autorisation. |
 | aucun | L'extension est connectée (icône en couleur), ou désactivée ou non appairée (icône grise). |
 
 L'interrupteur **Allow writing**, sous le power button, permet aux agents de modifier monday ; voir [Écrire dans monday](#écrire-dans-monday). Il est désactivé par défaut, et il devient ambre quand il est activé.
 
-**Recent reads** (lectures récentes) liste les trois dernières tâches lues par les agents : quel agent a lu chacune, quand, et si la lecture était complète. **History** ouvre les dix dernières, avec les avertissements de chaque lecture incomplète. Cliquez sur une tâche pour l'ouvrir dans monday. Le nom de l'agent est celui que donne son client MCP, comme Claude Code, Codex ou agy ; un client qui n'en donne pas apparaît comme « Unknown agent ».
+**Activity** (activité) liste les trois dernières actions des agents, lectures comme écritures. Chaque ligne montre l'action (Read, Update, Reply, Edit, Create, Move, Write back), la tâche, l'agent qui l'a demandée, quand, et comment elle s'est passée. **History** (historique) ouvre les cinquante dernières. Cliquez sur une ligne pour voir le détail : le texte d'une mise à jour et les personnes mentionnées, les colonnes modifiées et leurs valeurs, le groupe, les avertissements d'une lecture incomplète, ou l'erreur d'une écriture qui a échoué. **Open update** ouvre directement la mise à jour dans monday, et **Open task** la tâche ; la flèche au bout de chaque ligne ouvre aussi la tâche. Le nom de l'agent est celui que donne son client MCP, comme Claude Code, Codex ou agy ; un client qui n'en donne pas apparaît comme « Unknown agent ».
 
 ## Fonctionnement
 

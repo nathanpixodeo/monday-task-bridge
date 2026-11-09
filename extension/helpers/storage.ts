@@ -1,4 +1,5 @@
-import type { RecentRead } from './recent-reads'
+import { legacyReads } from './activity'
+import type { ActivityEntry } from './activity'
 
 export interface Config {
   paired: boolean
@@ -17,8 +18,8 @@ export interface Config {
   connectedAt: string | null
   capturing: boolean
   pendingOrigins: string[]
-  /** Task reads agents asked for, newest first, at most MAX_RECENT_READS. */
-  recentReads: RecentRead[]
+  /** Reads and writes agents asked for, newest first, at most MAX_ACTIVITY. */
+  activity: ActivityEntry[]
 }
 
 export const defaultConfig: Config = {
@@ -35,7 +36,7 @@ export const defaultConfig: Config = {
   connectedAt: null,
   capturing: false,
   pendingOrigins: [],
-  recentReads: []
+  activity: []
 }
 
 /** Fields reset when this browser is no longer paired with the bridge. */
@@ -54,12 +55,14 @@ export const unpairedFields: Partial<Config> = {
   connectedAt: null,
   capturing: false,
   pendingOrigins: [],
-  recentReads: []
+  activity: []
 }
 
 export async function getConfig(): Promise<Config> {
   const result = await chrome.storage.local.get('config')
-  return { ...defaultConfig, ...(result.config || {}) }
+  // Before writes were logged, the popup kept only reads, as `recentReads`; they carry over once, as reads
+  const { recentReads, ...stored } = (result.config || {}) as Partial<Config> & { recentReads?: unknown }
+  return { ...defaultConfig, ...stored, ...(stored.activity === undefined ? { activity: legacyReads(recentReads) } : {}) }
 }
 
 let writeQueue: Promise<unknown> = Promise.resolve()

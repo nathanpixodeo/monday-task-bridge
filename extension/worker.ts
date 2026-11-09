@@ -5,8 +5,8 @@ import type { ApiItem, MappedTask } from './helpers/monday-api'
 import { readAssignedTasks } from './helpers/assigned-tasks'
 import { writeBackToItem, WriteBackTargetError } from './helpers/write-back'
 import { performWrite, WriteTargetError } from './helpers/item-writes'
-import { addRecentRead, cleanAgentName } from './helpers/recent-reads'
-import type { RecentRead } from './helpers/recent-reads'
+import { addActivity, cleanAgentName, writeActivity, writeBackActivity } from './helpers/activity'
+import type { ActivityEntry } from './helpers/activity'
 import type {
   TaskSnapshot,
   TaskAttachment,
@@ -237,7 +237,12 @@ function badgeFor(config: Config): { text: string; color: string; title: string 
   if (config.status !== 'authenticated') return { text: '!', color: '#E11D48', title: 'Bridge offline' }
   if (config.pendingOrigins.length > 0) return { text: '+', color: '#D97706', title: 'Image host permission needed' }
   if (config.capturing) return { text: '…', color: '#7C3AED', title: 'Capturing task' }
-  if (config.recentReads[0]?.complete === false) return { text: '!', color: '#D97706', title: 'Last read incomplete' }
+  const latest = config.activity[0]
+  if (latest?.ok === false) {
+    return latest.kind === 'read'
+      ? { text: '!', color: '#D97706', title: 'Last read incomplete' }
+      : { text: '!', color: '#E11D48', title: 'Last write failed' }
+  }
   return { text: '', color: '#16A34A', title: 'Connected' }
 }
 
@@ -591,14 +596,14 @@ async function findTaskTabUrl(): Promise<string | undefined> {
   return mondayTabs.find((t) => t.url && isMondayTaskUrl(t.url))?.url
 }
 
-let readHistory: Promise<unknown> = Promise.resolve()
+let activityLog: Promise<unknown> = Promise.resolve()
 
-/** Adds a finished read to the popup's history. Queued, so reads that finish together all land. */
-function recordRead(read: RecentRead): Promise<unknown> {
-  readHistory = readHistory
-    .then(async () => setConfig({ recentReads: addRecentRead((await getConfig()).recentReads, read) }))
+/** Adds a finished read or write to the popup's activity log. Queued, so entries that finish together all land. */
+function recordActivity(entry: ActivityEntry): Promise<unknown> {
+  activityLog = activityLog
+    .then(async () => setConfig({ activity: addActivity((await getConfig()).activity, entry) }))
     .catch(() => {})
-  return readHistory
+  return activityLog
 }
 
 async function performCapture(requestId?: string, sourceUrl?: string, agent: string | null = null) {
@@ -767,13 +772,14 @@ async function performCapture(requestId?: string, sourceUrl?: string, agent: str
 
     if (!postRes.ok) throw new Error(`Bridge returned ${postRes.status}`)
 
-    await recordRead({
+    await recordActivity({
+      kind: 'read',
       title: snapshot.title,
       url: targetUrl,
       at: snapshot.capturedAt,
-      complete: snapshot.complete,
-      warnings,
-      agent
+      agent,
+      ok: snapshot.complete,
+      warnings
     })
     await setConfig({ error: null })
 
@@ -868,6 +874,8 @@ async function listAssignedTasks(
 /** Writes the status and the update the Hub asked for to one item, and tells the bridge what was written. */
 async function writeBack(msg: Extract<BridgeToExtensionMessage, { type: 'write-back' }>) {
   const { requestId, accountHost, boardId, itemId, comment, statusLabel } = msg
+  const request = { accountHost, boardId, itemId, comment, statusLabel }
+  const agent = cleanAgentName(msg.agent)
   // The bridge validates the target too; re-check so this worker only ever writes to a monday account
   if (accountHostOf(`https://${accountHost}/`) !== accountHost.toLowerCase()) {
     sendWs({ type: 'write-back-result', requestId, error: `${accountHost} is not a monday account`, code: 'INVALID_TARGET' })
@@ -876,8 +884,17 @@ async function writeBack(msg: Extract<BridgeToExtensionMessage, { type: 'write-b
   activeCaptures++
   try {
     await setConfig({ capturing: true })
-    const result = await writeBackToItem(mondayGraphql, { accountHost, boardId, itemId, comment, statusLabel })
+    let written
+    try {
+      written = await writeBackToItem(mondayGraphql, request)
+    } catch (err) {
+      await recordActivity(writeBackActivity(request, { error: err }, agent, new Date().toISOString()))
+      throw err
+    }
+    // The bridge takes only the result's own fields; the item's name is for the activity log
+    const { itemName, ...result } = written
     sendWs({ type: 'write-back-result', requestId, result })
+    await recordActivity(writeBackActivity(request, { result, itemName }, agent, new Date().toISOString()))
     await setConfig({ error: null })
   } finally {
     activeCaptures--
@@ -921,8 +938,19 @@ async function write(msg: Extract<BridgeToExtensionMessage, { type: 'write' }>) 
   activeCaptures++
   try {
     await setConfig({ capturing: true })
-    const result = await performWrite(mondayGraphql, host.toLowerCase(), msg)
+    const account = host.toLowerCase()
+    const agent = cleanAgentName(msg.agent)
+    let written
+    try {
+      written = await performWrite(mondayGraphql, account, msg)
+    } catch (err) {
+      await recordActivity(writeActivity(account, msg, { error: err }, agent, new Date().toISOString()))
+      throw err
+    }
+    // The bridge takes only the result's own fields; the item's name is for the activity log
+    const { itemName, ...result } = written
     sendWs({ type: 'write-result', requestId, result })
+    await recordActivity(writeActivity(account, msg, { result, itemName }, agent, new Date().toISOString()))
     await setConfig({ error: null })
   } finally {
     activeCaptures--

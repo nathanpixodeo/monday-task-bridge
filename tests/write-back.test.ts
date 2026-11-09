@@ -33,14 +33,15 @@ const request = { accountHost: 'team.monday.com', boardId: '123', itemId: '456',
 
 test('sets the Status column to the label first, then adds the update with the text kept as written', async () => {
   const fake = fakeGraphql({
-    WriteBackItem: () => itemOn('123'),
+    WriteBackItem: () => ({ items: [{ ...itemOn('123').items[0], name: 'Fix the login' }] }),
     WriteBackStatus: () => ({ change_simple_column_value: { id: '456' } }),
     WriteBackUpdate: () => ({ create_update: { id: '901' } })
   })
 
   const result = await writeBackToItem(fake.graphql, { ...request, statusLabel: 'Done' })
 
-  assert.deepEqual(result, { updateId: '901', statusSet: true })
+  // The item's name is for the popup's activity log; the worker drops it before answering the bridge
+  assert.deepEqual(result, { updateId: '901', statusSet: true, itemName: 'Fix the login' })
   assert.deepEqual(fake.names(), ['WriteBackItem', 'WriteBackStatus', 'WriteBackUpdate'])
   assert.ok(fake.calls.every((call) => call.host === 'team.monday.com'))
   assert.deepEqual(fake.calls[0].variables, { ids: ['456'] })

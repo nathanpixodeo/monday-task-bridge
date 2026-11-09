@@ -8,7 +8,7 @@ import type { WriteBackRequest, WriteBackResult } from '../../shared/types'
 import type { Graphql } from './assigned-tasks'
 
 const ITEM_QUERY = `query WriteBackItem($ids: [ID!]) {
-  items(ids: $ids) { id board { id columns { id title type } } }
+  items(ids: $ids) { id name board { id columns { id title type } } }
 }`
 
 const SET_STATUS = `mutation WriteBackStatus($boardId: ID!, $itemId: ID!, $columnId: String!, $value: String) {
@@ -54,20 +54,25 @@ function isColumn(value: unknown): value is ApiColumn {
 export const idOf = (value: unknown): string | null =>
   typeof value === 'string' && /^\d{1,20}$/.test(value) ? value : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : null
 
-export function readItem(data: unknown): { boardId: string; columns: ApiColumn[] } | null {
+export function readItem(data: unknown): { boardId: string; columns: ApiColumn[]; name?: string } | null {
   const items = (data as { items?: unknown } | null)?.items
   if (!Array.isArray(items) || items.length === 0) return null
-  const board = (items[0] as { board?: { id?: unknown; columns?: unknown } | null } | null)?.board
+  const item = items[0] as { name?: unknown; board?: { id?: unknown; columns?: unknown } | null } | null
+  const board = item?.board
   const boardId = idOf(board?.id)
   if (!board || boardId === null) return null
-  return { boardId, columns: Array.isArray(board.columns) ? board.columns.filter(isColumn) : [] }
+  const name = typeof item?.name === 'string' && item.name.trim() ? item.name.trim() : undefined
+  return { boardId, columns: Array.isArray(board.columns) ? board.columns.filter(isColumn) : [], ...(name ? { name } : {}) }
 }
+
+/** What the extension sends back, plus the item's name for the popup's activity log (never sent to the bridge). */
+export type WrittenBack = WriteBackResult & { itemName?: string }
 
 /**
  * Sets the status first, so a label the board does not have stops the write before anything is written; then adds the
  * update. Nothing is retried: the Hub writes back once per task.
  */
-export async function writeBackToItem(graphql: Graphql, request: WriteBackRequest): Promise<WriteBackResult> {
+export async function writeBackToItem(graphql: Graphql, request: WriteBackRequest): Promise<WrittenBack> {
   const { accountHost: host, boardId, itemId, statusLabel } = request
   const item = readItem(await graphql(host, ITEM_QUERY, { ids: [itemId] }))
   if (item === null) throw new WriteBackTargetError(`monday item ${itemId} was not found, or this account cannot see it`)
@@ -88,7 +93,11 @@ export async function writeBackToItem(graphql: Graphql, request: WriteBackReques
 
   try {
     const created = await graphql(host, CREATE_UPDATE, { itemId, body: updateBody(request.comment) })
-    return { updateId: idOf((created as { create_update?: { id?: unknown } | null } | null)?.create_update?.id), statusSet }
+    return {
+      updateId: idOf((created as { create_update?: { id?: unknown } | null } | null)?.create_update?.id),
+      statusSet,
+      ...(item.name ? { itemName: item.name } : {})
+    }
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     throw new Error(statusSet ? `Set the status to "${statusLabel}", but could not add the update: ${reason}` : reason)

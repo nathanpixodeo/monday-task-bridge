@@ -13,6 +13,7 @@ import type { ApiColumn } from './write-back'
 const ITEM_QUERY = `query WriteItem($ids: [ID!]) {
   items(ids: $ids) {
     id
+    name
     board { id columns { id title type } }
     group { id title }
     column_values { id value }
@@ -87,6 +88,7 @@ interface Group {
 /** The item as it is before the write: its board's columns, its group, and its current column values. */
 interface TargetItem {
   id: string
+  name?: string
   boardId: string
   columns: ApiColumn[]
   group: Group | null
@@ -131,7 +133,7 @@ async function readTarget(graphql: Graphql, host: string, boardId: string, itemI
   for (const entry of Array.isArray(raw.column_values) ? raw.column_values : []) {
     if (isRecord(entry) && typeof entry.id === 'string') values.set(entry.id, parseJson(entry.value))
   }
-  return { id: itemId, boardId, columns: item.columns, group: groupOf(raw.group), values }
+  return { id: itemId, name: item.name, boardId, columns: item.columns, group: groupOf(raw.group), values }
 }
 
 /** A column by its id, else by its title (case and surrounding spaces do not matter). */
@@ -449,11 +451,16 @@ export function bodyWithMentions(host: string, html: string, people: Person[]): 
 
 // ─── Writes ──────────────────────────────────────────────────────────
 
+/** What the extension sends back, plus the item's name for the popup's activity log (never sent to the bridge). */
+export type PerformedWrite = WriteResult & { itemName?: string }
+
+const named = (name: string | undefined) => (name ? { itemName: name } : {})
+
 /** Does one write an agent asked for; nothing is retried, so a failure is reported as it happened. */
-export async function performWrite(graphql: Graphql, host: string, request: WriteRequest): Promise<WriteResult> {
+export async function performWrite(graphql: Graphql, host: string, request: WriteRequest): Promise<PerformedWrite> {
   switch (request.op) {
     case 'add-update': {
-      await readTarget(graphql, host, request.boardId, request.itemId)
+      const target = await readTarget(graphql, host, request.boardId, request.itemId)
       if (request.replyToUpdateId !== undefined) {
         const data = await graphql(host, UPDATE_QUERY, { ids: [request.replyToUpdateId] })
         const update = ((data as { updates?: unknown[] } | null)?.updates ?? [])[0] as { item_id?: unknown } | undefined
@@ -476,7 +483,8 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
         boardId: request.boardId,
         itemId: request.itemId,
         ...(updateId ? { updateId } : {}),
-        ...(people.length ? { mentioned: people.map((person) => person.name) } : {})
+        ...(people.length ? { mentioned: people.map((person) => person.name) } : {}),
+        ...named(target.name)
       }
     }
 
@@ -489,7 +497,8 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
         boardId: request.boardId,
         itemId: request.itemId,
         columnsSet: titles,
-        ...(created.length ? { created } : {})
+        ...(created.length ? { created } : {}),
+        ...named(item.name)
       }
     }
 
@@ -515,7 +524,7 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
       }
       if (itemId === null || boardId === null) throw new Error(`monday did not say which ${kind} it created`)
 
-      const result: WriteResult = { op: request.op, accountHost: host, boardId, itemId, ...(group ? { group } : {}) }
+      const result: PerformedWrite = { op: request.op, accountHost: host, boardId, itemId, ...(group ? { group } : {}), ...named(request.name.trim()) }
       if (request.columns === undefined || Object.keys(request.columns).length === 0) return result
       try {
         const item = await readTarget(graphql, host, boardId, itemId)
@@ -527,10 +536,10 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
     }
 
     case 'move-item': {
-      await readTarget(graphql, host, request.boardId, request.itemId)
+      const target = await readTarget(graphql, host, request.boardId, request.itemId)
       const group = await findGroup(graphql, host, request.boardId, request.group)
       await graphql(host, MOVE_ITEM, { itemId: request.itemId, groupId: group.id })
-      return { op: request.op, accountHost: host, boardId: request.boardId, itemId: request.itemId, group }
+      return { op: request.op, accountHost: host, boardId: request.boardId, itemId: request.itemId, group, ...named(target.name) }
     }
   }
 }

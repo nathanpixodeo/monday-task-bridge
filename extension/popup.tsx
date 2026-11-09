@@ -3,8 +3,8 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Config } from './helpers/storage'
 import { getConfig } from './helpers/storage'
-import { MAX_RECENT_READS, agentLabel } from './helpers/recent-reads'
-import type { RecentRead } from './helpers/recent-reads'
+import { MAX_ACTIVITY, activityLabel, agentLabel } from './helpers/activity'
+import type { ActivityEntry, ActivityKind } from './helpers/activity'
 import './style.css'
 
 const BRIDGE_HOST = '127.0.0.1:3457'
@@ -376,6 +376,16 @@ function ChevronIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
       <path d="m6 9 6 6 6-6" />
+    </Icon>
+  )
+}
+
+function ExternalIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M14 4h6v6" />
+      <path d="M20 4 10 14" />
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
     </Icon>
   )
 }
@@ -956,61 +966,228 @@ function PairingCard({ code, expiresAt }: { code: string; expiresAt: string | nu
   )
 }
 
-/** How many reads the popup lists before "History". */
-const READS_SHOWN = 3
+/** How many entries the popup lists before "History". */
+const ACTIVITY_SHOWN = 3
 
-function ReadRow({ read, detailed = false }: { read: RecentRead; detailed?: boolean }) {
-  const title = read.title || 'Untitled task'
-  const count = read.warnings.length
+const PILL_COLORS: Record<ActivityKind, string> = {
+  read: 'bg-sky-400/10 text-sky-300 ring-sky-400/20',
+  'add-update': 'bg-violet-400/10 text-violet-300 ring-violet-400/25',
+  'update-item': 'bg-amber-400/10 text-amber-300 ring-amber-400/20',
+  'create-item': 'bg-emerald-400/10 text-emerald-300 ring-emerald-400/20',
+  'move-item': 'bg-cyan-400/10 text-cyan-300 ring-cyan-400/20',
+  'write-back': 'bg-fuchsia-400/10 text-fuchsia-300 ring-fuchsia-400/20'
+}
+
+const DIALOG =
+  'm-auto max-h-[calc(100%-32px)] w-[316px] max-w-[calc(100%-24px)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0F1529] p-0 text-slate-100 shadow-2xl backdrop:bg-black/60 open:flex'
+
+const LINK_BUTTON = `inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium transition duration-150 ${FOCUS_RING}`
+
+function ActionPill({ entry }: { entry: ActivityEntry }) {
+  return (
+    <span
+      className={`inline-flex h-[18px] shrink-0 items-center rounded-md px-1.5 text-[10px] font-semibold tracking-[0.06em] uppercase ring-1 ring-inset ${PILL_COLORS[entry.kind]}`}
+    >
+      {activityLabel(entry)}
+    </span>
+  )
+}
+
+/** A short word on how it went, after the agent and the time. */
+function summaryOf(entry: ActivityEntry): string {
+  if (entry.kind === 'read') return entry.ok ? 'Complete' : 'Incomplete'
+  if (!entry.ok) return 'Failed'
+  switch (entry.kind) {
+    case 'add-update':
+      return entry.mentioned?.length ? `Tagged ${entry.mentioned.length}` : 'Posted'
+    case 'update-item':
+      return entry.columns?.map((column) => column.title).join(', ') || 'Updated'
+    case 'create-item':
+      return entry.group ? `In ${entry.group}` : 'Created'
+    case 'move-item':
+      return entry.group ? `To ${entry.group}` : 'Moved'
+    case 'write-back':
+      return entry.status ? `Status ${entry.status}` : 'Posted'
+  }
+}
+
+const dotOf = (entry: ActivityEntry) => (entry.ok ? 'bg-emerald-400' : entry.kind === 'read' ? 'bg-amber-400' : 'bg-rose-400')
+
+function ActivityRow({ entry, onOpen }: { entry: ActivityEntry; onOpen: (entry: ActivityEntry) => void }) {
+  const title = entry.title || 'Untitled task'
 
   return (
-    <li className="px-4 py-2.5">
+    <li className="flex items-center gap-1 py-1.5 pr-2 pl-2">
+      <button
+        type="button"
+        onClick={() => onOpen(entry)}
+        aria-haspopup="dialog"
+        className={`min-w-0 flex-1 cursor-pointer rounded-lg px-2 py-1 text-left transition duration-150 hover:bg-white/[0.04] ${FOCUS_RING}`}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <ActionPill entry={entry} />
+          <span className="truncate text-sm leading-5 font-medium text-slate-100" title={title}>
+            {title}
+          </span>
+        </span>
+        <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-4 text-slate-400">
+          <span className="truncate font-medium text-slate-300" title={entry.agent ?? undefined}>
+            {agentLabel(entry.agent)}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span className="shrink-0">
+            <TimeAgo iso={entry.at} />
+          </span>
+          <span aria-hidden="true">·</span>
+          <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${dotOf(entry)}`} />
+          <span className="truncate">{summaryOf(entry)}</span>
+        </span>
+      </button>
       <a
-        href={read.url}
+        href={entry.url}
         target="_blank"
         rel="noreferrer"
-        title={title}
-        className={`block truncate rounded text-sm leading-5 font-medium text-slate-100 hover:text-white hover:underline ${FOCUS_RING}`}
+        aria-label={`Open ${title} in monday`}
+        title="Open in monday"
+        className={`grid size-8 shrink-0 place-items-center rounded-lg text-slate-400 transition duration-150 hover:bg-white/[0.06] hover:text-slate-100 ${FOCUS_RING}`}
       >
-        {title}
+        <ExternalIcon />
       </a>
-      <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-4 text-slate-400">
-        <span className="truncate font-medium text-slate-300" title={read.agent ?? undefined}>
-          <span className="sr-only">Read by </span>
-          {agentLabel(read.agent)}
-        </span>
-        <span aria-hidden="true">·</span>
-        <span className="shrink-0">
-          <TimeAgo iso={read.at} />
-        </span>
-        <span aria-hidden="true">·</span>
-        <span
-          aria-hidden="true"
-          className={`size-1.5 shrink-0 rounded-full ${read.complete ? 'bg-emerald-400' : 'bg-amber-400'}`}
-        />
-        <span className="shrink-0">{read.complete ? 'Complete' : 'Incomplete'}</span>
-      </p>
-      {detailed && count > 0 && (
-        <ul className="mt-1.5 flex list-disc flex-col gap-1 pl-4 text-xs leading-4 break-words text-amber-200/80 marker:text-amber-400/60">
-          {read.warnings.map((warning, index) => (
-            <li key={`${index}-${warning}`}>{warning}</li>
-          ))}
-        </ul>
-      )}
     </li>
   )
 }
 
-function RecentReads({ reads }: { reads: RecentRead[] }) {
-  const historyRef = useRef<HTMLDialogElement>(null)
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <dt className={LABEL}>{label}</dt>
+      <dd className="mt-1 text-xs leading-5 break-words text-slate-200">{children}</dd>
+    </div>
+  )
+}
+
+/** Everything the log kept about one read or write, with links to the task and to the update. */
+function ActivityDetails({ entry, onClose }: { entry: ActivityEntry | null; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null)
+
+  useEffect(() => {
+    const dialog = ref.current
+    if (!dialog) return
+    if (entry && !dialog.open) dialog.showModal()
+    if (!entry && dialog.open) dialog.close()
+  }, [entry])
 
   return (
-    <section aria-labelledby="reads-title" className={`${CARD} ${SURFACE}`}>
+    <dialog
+      ref={ref}
+      aria-labelledby="details-title"
+      onClose={onClose}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) event.currentTarget.close()
+      }}
+      className={DIALOG}
+    >
+      {entry && (
+        <>
+          <div className="flex shrink-0 items-start gap-2 border-b border-white/[0.08] py-1.5 pr-1.5 pl-4">
+            <div className="min-w-0 flex-1 py-1">
+              <ActionPill entry={entry} />
+              <h2 id="details-title" className="mt-1.5 text-sm leading-5 font-semibold break-words text-white">
+                {entry.title || 'Untitled task'}
+              </h2>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs leading-4 text-slate-400">
+                <span className="font-medium text-slate-300">{agentLabel(entry.agent)}</span>
+                <span aria-hidden="true">·</span>
+                <time dateTime={entry.at}>{new Date(entry.at).toLocaleString()}</time>
+                <span aria-hidden="true">·</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span aria-hidden="true" className={`size-1.5 rounded-full ${dotOf(entry)}`} />
+                  {entry.kind === 'read' ? summaryOf(entry) : entry.ok ? 'Done' : 'Failed'}
+                </span>
+              </p>
+            </div>
+            <IconButton label="Close" onClick={() => ref.current?.close()}>
+              <XIcon />
+            </IconButton>
+          </div>
+
+          <dl className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
+            {entry.error && (
+              <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-2 text-xs leading-5 break-words text-rose-200">
+                <dt className="sr-only">Error</dt>
+                <dd>{entry.error}</dd>
+              </div>
+            )}
+            {entry.body !== undefined && (
+              <Field label={entry.replyTo ? `Reply to update ${entry.replyTo}` : 'Update'}>
+                <p className="max-h-48 overflow-y-auto rounded-lg bg-white/[0.04] px-2.5 py-2 whitespace-pre-wrap">{entry.body}</p>
+              </Field>
+            )}
+            {entry.mentioned && entry.mentioned.length > 0 && <Field label="Tagged">{entry.mentioned.join(', ')}</Field>}
+            {entry.status && <Field label="Status">{entry.status}</Field>}
+            {entry.columns && entry.columns.length > 0 && (
+              <Field label="Columns">
+                <ul className="flex flex-col gap-1">
+                  {entry.columns.map((column, index) => (
+                    <li key={`${index}-${column.title}`}>
+                      <span className="text-slate-400">{column.title}:</span> {column.value}
+                    </li>
+                  ))}
+                </ul>
+              </Field>
+            )}
+            {entry.group && <Field label="Group">{entry.group}</Field>}
+            {entry.created && entry.created.length > 0 && <Field label="Created">{entry.created.join(', ')}</Field>}
+            {entry.warnings.length > 0 && (
+              <Field label="Warnings">
+                <ul className="flex list-disc flex-col gap-1 pl-4 text-amber-200/80 marker:text-amber-400/60">
+                  {entry.warnings.map((warning, index) => (
+                    <li key={`${index}-${warning}`}>{warning}</li>
+                  ))}
+                </ul>
+              </Field>
+            )}
+          </dl>
+
+          <div className="flex shrink-0 gap-2 border-t border-white/[0.08] px-4 py-3">
+            {entry.updateUrl && (
+              <a
+                href={entry.updateUrl}
+                target="_blank"
+                rel="noreferrer"
+                className={`${LINK_BUTTON} bg-linear-to-r from-violet-500 to-indigo-500 text-white hover:brightness-110`}
+              >
+                Open update
+                <ExternalIcon className="size-3.5" />
+              </a>
+            )}
+            <a
+              href={entry.url}
+              target="_blank"
+              rel="noreferrer"
+              className={`${LINK_BUTTON} border border-white/[0.08] bg-white/[0.06] text-slate-100 hover:bg-white/[0.1]`}
+            >
+              Open task
+              <ExternalIcon className="size-3.5" />
+            </a>
+          </div>
+        </>
+      )}
+    </dialog>
+  )
+}
+
+function Activity({ entries }: { entries: ActivityEntry[] }) {
+  const historyRef = useRef<HTMLDialogElement>(null)
+  const [selected, setSelected] = useState<ActivityEntry | null>(null)
+
+  return (
+    <section aria-labelledby="activity-title" className={`${CARD} ${SURFACE}`}>
       <div className="flex h-10 items-center justify-between pr-2 pl-4">
-        <h3 id="reads-title" className={LABEL}>
-          Recent reads
+        <h3 id="activity-title" className={LABEL}>
+          Activity
         </h3>
-        {reads.length > 0 && (
+        {entries.length > 0 && (
           <button
             type="button"
             onClick={() => historyRef.current?.showModal()}
@@ -1022,12 +1199,12 @@ function RecentReads({ reads }: { reads: RecentRead[] }) {
           </button>
         )}
       </div>
-      {reads.length === 0 ? (
-        <p className="px-4 pb-3 text-xs leading-4 text-slate-400">No reads yet. Ask your agent to read a monday task.</p>
+      {entries.length === 0 ? (
+        <p className="px-4 pb-3 text-xs leading-4 text-slate-400">No activity yet. Ask your agent to read or update a monday task.</p>
       ) : (
         <ul className="divide-y divide-white/[0.06] border-t border-white/[0.06]">
-          {reads.slice(0, READS_SHOWN).map((read) => (
-            <ReadRow key={`${read.at}-${read.url}`} read={read} />
+          {entries.slice(0, ACTIVITY_SHOWN).map((entry) => (
+            <ActivityRow key={`${entry.at}-${entry.kind}-${entry.url}`} entry={entry} onOpen={setSelected} />
           ))}
         </ul>
       )}
@@ -1039,28 +1216,31 @@ function RecentReads({ reads }: { reads: RecentRead[] }) {
           if (event.target === event.currentTarget) event.currentTarget.close()
         }}
         // Flex only while open, so a closed dialog stays hidden; the list scrolls inside the capped height
-        className="m-auto max-h-[calc(100%-32px)] w-[316px] max-w-[calc(100%-24px)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0F1529] p-0 text-slate-100 shadow-2xl backdrop:bg-black/60 open:flex"
+        className={DIALOG}
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.08] py-1.5 pr-1.5 pl-4">
           <div className="min-w-0 flex-1">
             <h2 id="history-title" className="text-sm leading-5 font-semibold text-white">
-              Read history
+              Activity history
             </h2>
-            <p className="text-xs leading-4 text-slate-400">The last {MAX_RECENT_READS} tasks agents read, newest first</p>
+            <p className="text-xs leading-4 text-slate-400">The last {MAX_ACTIVITY} reads and writes agents asked for, newest first</p>
           </div>
           <IconButton label="Close" onClick={() => historyRef.current?.close()}>
             <XIcon />
           </IconButton>
         </div>
         <ul className="min-h-0 flex-1 divide-y divide-white/[0.06] overflow-y-auto">
-          {reads.map((read) => (
-            <ReadRow key={`${read.at}-${read.url}`} read={read} detailed />
+          {entries.map((entry) => (
+            <ActivityRow key={`${entry.at}-${entry.kind}-${entry.url}`} entry={entry} onOpen={setSelected} />
           ))}
         </ul>
       </dialog>
+      {/* Opened after History, so it shows on top of it */}
+      <ActivityDetails entry={selected} onClose={() => setSelected(null)} />
     </section>
   )
 }
+
 
 function PermissionsCard({
   origins,
@@ -1346,7 +1526,7 @@ function Popup() {
               </>
             )}
 
-            {config.paired && <RecentReads reads={config.recentReads} />}
+            {config.paired && <Activity entries={config.activity} />}
           </main>
         </>
       )}

@@ -197,7 +197,7 @@ export type ExtensionToBridgeMessage =
 
 export type BridgeToExtensionMessage =
   | { type: 'hello-ack' }
-  /** `agent` is the name the asking MCP client gave itself, shown in the popup's read history. */
+  /** `agent` is the name the asking MCP client gave itself, shown in the popup's activity log. */
   | { type: 'capture'; requestId: string; url?: string; agent?: string }
   /** `accountHost` was asked for explicitly; `cachedHost` is the latest snapshot's, used only when no monday tab is open. */
   | {
@@ -210,7 +210,10 @@ export type BridgeToExtensionMessage =
       /** List the boards to choose from, reading no task. */
       boardsOnly?: boolean
     }
-  /** Write to one item with the signed-in session: only ever sent for a write the bridge was asked for. */
-  | ({ type: 'write-back'; requestId: string } & WriteBackRequest)
+  /**
+   * Write to one item with the signed-in session: only ever sent for a write the bridge was asked for. `agent`, as
+   * for a capture, labels the write in the popup's activity log.
+   */
+  | ({ type: 'write-back'; requestId: string; agent?: string } & WriteBackRequest)
   /** An agent's write; `cachedHost` is the latest snapshot's, used only when no account host was given or open. */
-  | ({ type: 'write'; requestId: string; cachedHost?: string } & WriteRequest)
+  | ({ type: 'write'; requestId: string; cachedHost?: string; agent?: string } & WriteRequest)

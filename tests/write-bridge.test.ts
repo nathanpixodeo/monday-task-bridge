@@ -107,6 +107,15 @@ test('the bridge relays an agent write only while "Allow writing" is on, and the
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), result)
 
+    // The agent's name comes along for the popup's activity log; an odd one is dropped
+    for (const [header, agent] of [['codex-mcp-client', 'codex-mcp-client'], ['bad	name', undefined]] as const) {
+      const named = send(update, { ...adminHeaders, 'X-Bridge-Agent': header })
+      const next = await extension.nextCommand()
+      assert.equal((next as { agent?: string }).agent, agent)
+      extension.ws.send(JSON.stringify({ type: 'write-result', requestId: next.requestId, result }))
+      assert.equal((await named).status, 200)
+    }
+
     // An item the account cannot write to, a failed write, an answer the bridge cannot pass on, and a switch turned
     // off before the bridge heard of it
     for (const [answer, status, error] of [

@@ -218,14 +218,14 @@ Bấm **power button** để bật hoặc tắt kết nối. Khi kết nối t�
 | Huy hiệu | Ý nghĩa |
 | --- | --- |
 | `…` (tím) | Đang đọc một task, hoặc đang chờ duyệt pairing. |
-| `!` (đỏ) | Kết nối đang bật, nhưng bridge đang offline hoặc chưa kết nối. |
-| `!` (hổ phách) | Lần đọc gần nhất chưa đầy đủ. Mở **History** (lịch sử) trong popup để đọc các cảnh báo. |
+| `!` (đỏ) | Kết nối đang bật, nhưng bridge đang offline hoặc chưa kết nối; hoặc lần ghi gần nhất bị lỗi. Mở lần ghi đó trong **Activity** để đọc lỗi. |
+| `!` (hổ phách) | Lần đọc gần nhất chưa đầy đủ. Mở lần đọc đó trong **Activity** (hoạt động) để đọc các cảnh báo. |
 | `+` (hổ phách) | Một host chứa ảnh cần được cấp quyền. |
 | không có | Đã kết nối (biểu tượng màu), hoặc đã tắt hay chưa pair (biểu tượng xám). |
 
 Công tắc **Allow writing** nằm dưới power button, cho phép agent sửa monday; xem [Ghi lên monday](#ghi-lên-monday). Công tắc mặc định tắt, và chuyển sang màu hổ phách khi bật.
 
-**Recent reads** (lần đọc gần đây) liệt kê ba task agent đọc gần nhất: agent nào đọc, lúc nào, và lần đọc có đầy đủ không. **History** mở mười lần đọc gần nhất, kèm cảnh báo của mỗi lần đọc chưa đầy đủ. Bấm vào một task để mở nó trên monday. Tên agent là tên mà MCP client của nó khai báo, ví dụ Claude Code, Codex hoặc agy; client không khai báo tên thì hiện là "Unknown agent".
+**Activity** (hoạt động) liệt kê ba việc agent làm gần nhất, gồm cả đọc lẫn ghi. Mỗi dòng có hành động (Read, Update, Reply, Edit, Create, Move, Write back), task, agent nào yêu cầu, lúc nào, và kết quả ra sao. **History** (lịch sử) mở năm mươi việc gần nhất. Bấm vào một dòng để xem chi tiết: nội dung update và những người được tag, các cột đã đổi cùng giá trị, group, cảnh báo của lần đọc chưa đầy đủ, hoặc lỗi của lần ghi thất bại. **Open update** mở thẳng update đó trên monday, **Open task** mở task; mũi tên cuối mỗi dòng cũng mở task. Tên agent là tên mà MCP client của nó khai báo, ví dụ Claude Code, Codex hoặc agy; client không khai báo tên thì hiện là "Unknown agent".
 
 ## Cách hoạt động
 

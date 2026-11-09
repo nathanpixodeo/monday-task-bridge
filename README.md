@@ -216,14 +216,14 @@ The **power button** turns the connection on and off. While it is off, reads fai
 | Badge | Meaning |
 | --- | --- |
 | `…` (violet) | Reading a task, or waiting for pairing approval. |
-| `!` (red) | The connection is on, but the bridge is offline or not connected. |
-| `!` (amber) | The last read is incomplete. Open **History** in the popup to read its warnings. |
+| `!` (red) | The connection is on, but the bridge is offline or not connected; or the last write failed. Open the write in **Activity** to read its error. |
+| `!` (amber) | The last read is incomplete. Open the read in **Activity** to read its warnings. |
 | `+` (amber) | An image host needs permission. |
 | none | Connected (color icon), or turned off or not paired (grey icon). |
 
 The **Allow writing** switch, under the power button, lets agents edit monday; see [Writing to monday](#writing-to-monday). It is off by default, and it turns amber while it is on.
 
-**Recent reads** lists the last three tasks agents read: which agent read each one, when, and whether the read was complete. **History** opens the last ten, with the warnings of each incomplete read. Click a task to open it in monday. The agent name is the one its MCP client gives, such as Claude Code, Codex, or agy; a client that gives none shows as "Unknown agent".
+**Activity** lists the last three things agents did, reads and writes alike. Each row shows the action (Read, Update, Reply, Edit, Create, Move, Write back), the task, which agent asked, when, and how it went. **History** opens the last fifty. Click a row to see the details: the text of an update and the people tagged, the columns set and their values, the group, the warnings of an incomplete read, or the error of a failed write. **Open update** goes straight to the update in monday, and **Open task** to the task; the arrow at the end of each row opens the task too. The agent name is the one its MCP client gives, such as Claude Code, Codex, or agy; a client that gives none shows as "Unknown agent".
 
 ## How it works
 

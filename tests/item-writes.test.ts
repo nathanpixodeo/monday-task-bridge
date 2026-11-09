@@ -94,7 +94,7 @@ test('tags people in an update where the body names them, else at its start, and
     { id: 13, name: 'Lan Tran', email: 'lan@team.com' }
   ]
   const fake = fakeGraphql({
-    WriteItem: () => itemOn('123'),
+    WriteItem: () => ({ items: [{ ...itemOn('123').items[0], name: ' Withdraw ' }] }),
     WriteMe: () => ({ me: { id: '10' } }),
     WriteUsersByEmail: (call) => ({ users: users.filter((user) => (call.variables.emails as string[]).includes(user.email)) }),
     WriteUsersByName: (call) => ({ users: users.filter((user) => user.name.includes(call.variables.name as string)) }),
@@ -115,7 +115,8 @@ test('tags people in an update where the body names them, else at its start, and
     boardId: '123',
     itemId: '456',
     updateId: '902',
-    mentioned: ['An Nguyen', 'An', 'Me <Admin>', 'Lan Tran']
+    mentioned: ['An Nguyen', 'An', 'Me <Admin>', 'Lan Tran'],
+    itemName: 'Withdraw'
   })
   const sent = fake.calls.find((call) => call.query.includes('mutation WriteAddUpdate'))!.variables
   assert.equal(
@@ -329,13 +330,13 @@ test('creates an item in a group found by title, and a subitem whose columns are
   })
 
   const item = await performWrite(fake.graphql, HOST, { op: 'create-item', boardId: '123', name: ' Write docs ', group: 'done' })
-  assert.deepEqual(item, { op: 'create-item', accountHost: HOST, boardId: '123', itemId: '700', group: { id: 'done', title: 'Done' } })
+  assert.deepEqual(item, { op: 'create-item', accountHost: HOST, boardId: '123', itemId: '700', group: { id: 'done', title: 'Done' }, itemName: 'Write docs' })
   assert.deepEqual(fake.calls[1].variables, { boardId: '123', groupId: 'done', name: 'Write docs' })
 
   const subitem = await performWrite(fake.graphql, HOST, {
     op: 'create-item', boardId: '123', name: 'Check login', parentItemId: '456', columns: { Status: 'Working on it' }
   })
-  assert.deepEqual(subitem, { op: 'create-item', accountHost: HOST, boardId: '555', itemId: '801', columnsSet: ['Status'] })
+  assert.deepEqual(subitem, { op: 'create-item', accountHost: HOST, boardId: '555', itemId: '801', columnsSet: ['Status'], itemName: 'Check login' })
   const write = fake.calls.find((call) => call.query.includes('mutation WriteColumns'))!
   assert.deepEqual([write.variables.boardId, write.variables.itemId], ['555', '801'])
 

@@ -421,20 +421,20 @@ export function rejectAssignedTasks(requestId: string, err: Error, targetConnId?
  * Ask the extension to write to one monday item with the signed-in session: add the update, then set the status
  * label when one is given. The bridge never retries a write: the caller decides what to do with a failure.
  */
-export async function requestWriteBack(request: WriteBackRequest): Promise<WriteBackResult> {
+export async function requestWriteBack(request: WriteBackRequest, agent?: string): Promise<WriteBackResult> {
   await waitForExtension()
   const target = liveTarget()
   if (target && !target.capabilities?.includes('writeBack')) {
     return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to write back to monday'))
   }
-  return requestFromExtension(pendingWriteBacks, (requestId) => ({ type: 'write-back', requestId, ...request }))
+  return requestFromExtension(pendingWriteBacks, (requestId) => ({ type: 'write-back', requestId, ...request, ...(agent ? { agent } : {}) }))
 }
 
 /**
  * Ask the extension to do one write an agent asked for. Refused here while "Allow writing" is off in the popup; the
  * extension checks the switch again before it writes. Never retried.
  */
-export async function requestWrite(request: WriteRequest, cachedHost?: string): Promise<WriteResult> {
+export async function requestWrite(request: WriteRequest, cachedHost?: string, agent?: string): Promise<WriteResult> {
   await waitForExtension()
   const target = liveTarget()
   if (target && !target.capabilities?.includes('write')) {
@@ -442,7 +442,7 @@ export async function requestWrite(request: WriteRequest, cachedHost?: string): 
   }
   if (target && target.writeEnabled !== true) return Promise.reject(new WriteDisabledError())
   // JSON.stringify drops cachedHost when it is undefined
-  return requestFromExtension(pendingWrites, (requestId) => ({ type: 'write', requestId, cachedHost, ...request }))
+  return requestFromExtension(pendingWrites, (requestId) => ({ type: 'write', requestId, cachedHost, ...request, ...(agent ? { agent } : {}) }))
 }
 
 /** Settle a pending write or write-back with the extension's answer; only the socket the request went to may answer it. */
@@ -736,8 +736,8 @@ async function handleReadTask(req: http.IncomingMessage, res: http.ServerRespons
 }
 
 /**
- * The agent the MCP server reads for, from its X-Bridge-Agent header. It only labels the read in the popup's history,
- * so a missing or odd name is dropped rather than refused.
+ * The agent the MCP server reads or writes for, from its X-Bridge-Agent header. It only labels the read or write in the
+ * popup's activity log, so a missing or odd name is dropped rather than refused.
  */
 function agentOf(req: http.IncomingMessage): string | undefined {
   const value = req.headers['x-bridge-agent']
@@ -824,7 +824,7 @@ async function handleWriteBack(req: http.IncomingMessage, res: http.ServerRespon
   }
 
   try {
-    json(res, 200, await requestWriteBack(parsed.data))
+    json(res, 200, await requestWriteBack(parsed.data, agentOf(req)))
   } catch (err: unknown) {
     if (err instanceof InvalidTargetError) {
       json(res, 400, { error: err.message })
@@ -862,7 +862,7 @@ async function handleWrite(req: http.IncomingMessage, res: http.ServerResponse):
   const cachedHost = latestHost && isMondayHost(latestHost) ? latestHost : undefined
 
   try {
-    json(res, 200, await requestWrite(parsed.data as WriteRequest, cachedHost))
+    json(res, 200, await requestWrite(parsed.data as WriteRequest, cachedHost, agentOf(req)))
   } catch (err: unknown) {
     if (err instanceof WriteDisabledError) {
       json(res, 403, { error: err.message })

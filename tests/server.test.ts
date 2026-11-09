@@ -172,7 +172,7 @@ test('pairing, origin restrictions, original image storage and live capture work
     assert.equal(((await urlResult.json()) as { snapshot: TaskSnapshot }).snapshot.title, 'Example task')
 
     // No host given: falls back to the account host of the latest cached snapshot.
-    // The MCP server names the agent it reads for, and the extension gets that name for its read history
+    // The MCP server names the agent it reads for, and the extension gets that name for its activity log
     const idRead = send('/v1/read-task', { boardId: '123', itemId: '789' }, { ...adminHeaders, 'X-Bridge-Agent': 'claude-code' })
     const idCommand = await nextCommand()
     assert.equal(idCommand.type, 'capture')
