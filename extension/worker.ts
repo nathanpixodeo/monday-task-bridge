@@ -102,7 +102,7 @@ async function connectWs() {
           socket.send(JSON.stringify({
             type: 'hello',
             token: c.token,
-            capabilities: ['assignedTasks', 'boardFilter', 'writeBack', 'write'],
+            capabilities: ['assignedTasks', 'boardFilter', 'writeBack', 'write', 'updateEdits'],
             writeEnabled: c.allowWrite
           } satisfies ExtensionToBridgeMessage))
         }

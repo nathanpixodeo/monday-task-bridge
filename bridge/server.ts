@@ -430,6 +430,9 @@ export async function requestWriteBack(request: WriteBackRequest, agent?: string
   return requestFromExtension(pendingWriteBacks, (requestId) => ({ type: 'write-back', requestId, ...request, ...(agent ? { agent } : {}) }))
 }
 
+/** Ops an extension can do only once its hello lists `updateEdits`. */
+const UPDATE_EDIT_OPS: ReadonlySet<WriteRequest['op']> = new Set(['edit-update', 'delete-update'])
+
 /**
  * Ask the extension to do one write an agent asked for. Refused here while "Allow writing" is off in the popup; the
  * extension checks the switch again before it writes. Never retried.
@@ -439,6 +442,9 @@ export async function requestWrite(request: WriteRequest, cachedHost?: string, a
   const target = liveTarget()
   if (target && !target.capabilities?.includes('write')) {
     return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to write to monday'))
+  }
+  if (target && UPDATE_EDIT_OPS.has(request.op) && !target.capabilities?.includes('updateEdits')) {
+    return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to edit or delete monday updates'))
   }
   if (target && target.writeEnabled !== true) return Promise.reject(new WriteDisabledError())
   // JSON.stringify drops cachedHost when it is undefined

@@ -84,6 +84,38 @@ test('an update logs its text, the people tagged, and a link to the update', () 
   assert.equal(activityLabel(reply), 'Reply')
 })
 
+test('an edited update logs its new text and a link; a deleted one logs the text it had', () => {
+  const edited = writeActivity(
+    HOST,
+    { op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', body: 'Fixed typo', mentions: ['me'] },
+    { result: { op: 'edit-update', accountHost: HOST, boardId: '123', itemId: '456', updateId: '77', mentioned: ['Nathan'] }, itemName: 'Withdraw' },
+    'claude-code',
+    AT
+  )
+  assert.equal(edited.kind, 'edit-update')
+  assert.equal(edited.body, 'Fixed typo')
+  assert.equal(edited.updateUrl, `https://${HOST}/boards/123/pulses/456/posts/77`)
+  assert.deepEqual(edited.mentioned, ['Nathan'])
+  assert.equal(activityLabel(edited), 'Edit update')
+
+  const deleted = writeActivity(
+    HOST,
+    { op: 'delete-update', boardId: '123', itemId: '456', updateId: '77' },
+    { result: { op: 'delete-update', accountHost: HOST, boardId: '123', itemId: '456', updateId: '77', deletedBody: 'Old text' } },
+    null,
+    AT
+  )
+  assert.equal(deleted.ok, true)
+  assert.equal(deleted.body, 'Old text')
+  assert.equal(deleted.updateUrl, undefined)
+  assert.equal(activityLabel(deleted), 'Delete update')
+
+  const failed = writeActivity(HOST, { op: 'delete-update', boardId: '123', itemId: '456', updateId: '77' }, { error: new Error('monday API: no permission') }, null, AT)
+  assert.equal(failed.ok, false)
+  assert.equal(failed.error, 'monday API: no permission')
+  assert.equal(failed.updateUrl, `https://${HOST}/boards/123/pulses/456/posts/77`)
+})
+
 test('a column change logs each column by its title, and a failed one by the names given, with the error', () => {
   const columns = { status: 'Done', Owner: { add: ['me'] }, 'Due date': null }
   const done = writeActivity(

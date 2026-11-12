@@ -100,7 +100,7 @@ Trình cài đặt thêm lệnh `monday-bridge` vào thư mục global của npm
 | `monday-bridge stop` | Dừng bridge. Phiên agent đang mở sẽ khởi động lại bridge trong vòng 15 giây; nếu không có phiên nào mở thì phiên tiếp theo sẽ làm việc này. |
 | `monday-bridge run` | Chạy bridge ngay trong cửa sổ hiện tại, kèm log hiện trên màn hình. Nhấn Ctrl+C để dừng. |
 | `monday-bridge pair 123456` | Duyệt mã 6 chữ số hiện trong popup của extension. |
-| `monday-bridge approval auto` | Cho agent đọc monday mà không gặp câu hỏi yes/no mỗi lần. `manual` khiến agent hỏi lại; `status` hiện chế độ đang dùng. Xem [Chế độ duyệt](#chế-độ-duyệt-auto-hoặc-manual). |
+| `monday-bridge approval auto` | Cho agent đọc monday, và thêm hoặc sửa update, mà không gặp câu hỏi yes/no mỗi lần. `manual` khiến agent hỏi lại; `status` hiện chế độ đang dùng. Xem [Chế độ duyệt](#chế-độ-duyệt-auto-hoặc-manual). |
 | `monday-bridge help` | Liệt kê các lệnh. |
 
 Lệnh này là một link (liên kết) tới thư mục cài đặt, nên mỗi lần cập nhật bạn không cần cài lại lệnh.
@@ -156,8 +156,8 @@ irm https://raw.githubusercontent.com/nathanpixodeo/monday-task-bridge/main/scri
 
 Mặc định, agent CLI yêu cầu bạn duyệt từng lần gọi MCP tool, nên mỗi lần đọc monday đều dừng lại ở một câu hỏi yes/no. Chế độ duyệt quyết định việc này cho các tool của bridge trong Claude Code, Codex và agy cùng lúc:
 
-- **`auto`**: agent đọc task, board và ảnh mà không hỏi. Trình cài đặt đặt chế độ này.
-- **`manual`**: agent hỏi trước mỗi lần đọc, giống hành vi mặc định của các CLI.
+- **`auto`**: agent đọc task, board và ảnh, và thêm hoặc sửa update, mà không hỏi. Trình cài đặt đặt chế độ này.
+- **`manual`**: agent hỏi trước mỗi lần đọc và mỗi lần ghi, giống hành vi mặc định của các CLI.
 
 Bạn có thể chuyển chế độ bất cứ lúc nào, từ bất kỳ thư mục nào, sau đó khởi động lại các phiên agent đang mở:
 
@@ -167,9 +167,9 @@ monday-bridge approval manual    # hỏi trước mỗi lần đọc
 monday-bridge approval status    # hiện chế độ của từng CLI
 ```
 
-`auto` chỉ áp dụng cho các tool đọc. Các tool ghi luôn hỏi. Lệnh này ghi các quy tắc dưới đây, và `manual` gỡ chúng đi:
+`auto` áp dụng cho các tool đọc, `monday_add_update` và `monday_edit_update`. Xoá update và các lần ghi lên item (`monday_update_item`, `monday_create_item`, `monday_move_item`) luôn hỏi. Cấu hình do `auto` bản cũ ghi chỉ có tool đọc, và `status` hiện là `partial`: chạy lại `monday-bridge approval auto`. Lệnh này ghi các quy tắc dưới đây, và `manual` gỡ chúng đi:
 
-| CLI | Tệp | Quy tắc cho mỗi tool đọc |
+| CLI | Tệp | Quy tắc cho mỗi tool mà `auto` áp dụng |
 | --- | --- | --- |
 | Claude Code | `settings.json` trong thư mục profile (`~/.claude`, hoặc `CLAUDE_CONFIG_DIR`) | `permissions.allow`: `mcp__monday-task-bridge__monday_read_task` |
 | Codex | `config.toml` trong `~/.codex` (hoặc `CODEX_HOME`) | `[mcp_servers.monday-task-bridge.tools.monday_read_task]` với `approval_mode = "approve"` |
@@ -204,10 +204,12 @@ Quyền ghi tắt cho tới khi bạn bật. Mở popup của extension và bậ
 | `monday_update_item` | Đổi nhiều cột trong một lần, theo tên hoặc id cột: label status, tags (một danh sách, hoặc `{add, remove}`), people (email, họ tên đầy đủ, hoặc `"me"`; một danh sách, hoặc `{add, remove}`), ngày `YYYY-MM-DD` hoặc `YYYY-MM-DD HH:mm`, timeline `{from, to}`, số, text, long text, checkbox, label dropdown, link, hoặc tên item. `null` xoá giá trị cột. |
 | `monday_create_item` | Tạo item trong một group (theo tên hoặc id), hoặc tạo subitem dưới `parentItemId`, và có thể đặt các cột của nó. |
 | `monday_move_item` | Chuyển item sang group khác (theo tên hoặc id). |
+| `monday_edit_update` | Thay nội dung của một update hoặc reply (`updateId`) trên item. Nội dung được ghi giống update mới; người trong `mentions` được tag, nhưng monday không gửi thông báo lần nữa. monday quyết định tài khoản của bạn có được sửa hay không. |
+| `monday_delete_update` | Xoá hẳn một update hoặc reply (`updateId`) trên item, kèm các reply của nó, và trả lại nội dung cũ (`deletedBody`) để có thể đăng lại. monday quyết định tài khoản của bạn có được xoá hay không. |
 
-Không có gì bị xoá hay archive. Tag chưa có chỉ được tạo khi agent truyền `createMissingTags`. Label status hoặc dropdown chưa có chỉ được tạo khi agent truyền `createMissingLabels`. Không lần ghi nào được thử lại.
+Chỉ update có thể bị xoá, và chỉ qua `monday_delete_update`; không item nào bị xoá hay archive. Update chỉ được sửa hoặc xoá khi nó nằm trên item được chỉ định. Tag chưa có chỉ được tạo khi agent truyền `createMissingTags`. Label status hoặc dropdown chưa có chỉ được tạo khi agent truyền `createMissingLabels`. Không lần ghi nào được thử lại.
 
-Agent luôn thấy bốn tool này. Khi công tắc tắt, các tool trả về `WRITE_DISABLED`, và agent nên nhờ bạn bật quyền ghi. Cả bridge và extension đều kiểm tra công tắc. `monday-bridge status` hiện trạng thái ở dòng `Writing:`. Agent CLI luôn hỏi trước mỗi lần ghi, kể cả ở chế độ duyệt `auto`.
+Agent luôn thấy sáu tool này. Khi công tắc tắt, các tool trả về `WRITE_DISABLED`, và agent nên nhờ bạn bật quyền ghi. Cả bridge và extension đều kiểm tra công tắc. `monday-bridge status` hiện trạng thái ở dòng `Writing:`. Ở chế độ duyệt `auto`, agent CLI thêm và sửa update mà không hỏi, và hỏi trước mọi lần ghi khác. Agent CLI luôn hỏi trước `monday_delete_update`; tool này còn được đánh dấu destructive (`destructiveHint`). Extension bản cũ, chưa hỗ trợ sửa, trả `EXTENSION_UPDATE_REQUIRED` cho hai tool update này: reload extension trong `chrome://extensions`.
 
 `monday_write_back` là tool riêng, dành cho Nexkit Agent Hub. Tool này thêm một update vào item và có thể đặt cột Status của item. Agent chỉ thấy tool này khi MCP client của nó khởi động server với `MONDAY_BRIDGE_ALLOW_WRITE=1`. Trình cài đặt không đặt biến này, và công tắc trong popup không áp dụng cho tool này.
 
@@ -225,7 +227,7 @@ Bấm **power button** để bật hoặc tắt kết nối. Khi kết nối t�
 
 Công tắc **Allow writing** nằm dưới power button, cho phép agent sửa monday; xem [Ghi lên monday](#ghi-lên-monday). Công tắc mặc định tắt, và chuyển sang màu hổ phách khi bật.
 
-**Activity** (hoạt động) liệt kê ba việc agent làm gần nhất, gồm cả đọc lẫn ghi. Mỗi dòng có hành động (Read, Update, Reply, Edit, Create, Move, Write back), task, agent nào yêu cầu, lúc nào, và kết quả ra sao. **History** (lịch sử) mở năm mươi việc gần nhất. Bấm vào một dòng để xem chi tiết: nội dung update và những người được tag, các cột đã đổi cùng giá trị, group, cảnh báo của lần đọc chưa đầy đủ, hoặc lỗi của lần ghi thất bại. **Open update** mở thẳng update đó trên monday, **Open task** mở task; mũi tên cuối mỗi dòng cũng mở task. Tên agent là tên mà MCP client của nó khai báo, ví dụ Claude Code, Codex hoặc agy; client không khai báo tên thì hiện là "Unknown agent".
+**Activity** (hoạt động) liệt kê ba việc agent làm gần nhất, gồm cả đọc lẫn ghi. Mỗi dòng có hành động (Read, Update, Reply, Edit, Create, Move, Edit update, Delete update, Write back), task, agent nào yêu cầu, lúc nào, và kết quả ra sao. **History** (lịch sử) mở năm mươi việc gần nhất. Bấm vào một dòng để xem chi tiết: nội dung update (nội dung mới của update đã sửa, nội dung cũ của update đã xoá) và những người được tag, các cột đã đổi cùng giá trị, group, cảnh báo của lần đọc chưa đầy đủ, hoặc lỗi của lần ghi thất bại. **Open update** mở thẳng update đó trên monday, **Open task** mở task; mũi tên cuối mỗi dòng cũng mở task. Tên agent là tên mà MCP client của nó khai báo, ví dụ Claude Code, Codex hoặc agy; client không khai báo tên thì hiện là "Unknown agent".
 
 ## Cách hoạt động
 

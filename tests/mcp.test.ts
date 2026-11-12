@@ -41,9 +41,12 @@ test('MCP exposes cached task and original image with no monday API token', { ti
     assert.ok(tools.tools.some(tool => tool.name === 'monday_get_task'))
     assert.ok(tools.tools.some(tool => tool.name === 'monday_get_image'))
 
-    // Exactly the tools approval mode allows are marked read-only: Claude Code's plan mode runs only those
+    // Exactly the read tools are marked read-only: Claude Code's plan mode runs only those
     const readOnly = tools.tools.filter(tool => tool.annotations?.readOnlyHint === true).map(tool => tool.name)
     assert.deepEqual(readOnly.sort(), [...READ_TOOLS].sort())
+    // Deleting an update is the one tool marked destructive
+    const destructive = tools.tools.filter(tool => tool.annotations?.destructiveHint === true).map(tool => tool.name)
+    assert.deepEqual(destructive, ['monday_delete_update'])
 
     const task = await client.callTool({ name: 'monday_get_task', arguments: {} })
     assert.equal(task.isError, undefined)
@@ -100,7 +103,7 @@ test('MCP always lists the agent writes, and monday_write_back only with MONDAY_
     assert.ok(reading.includes('monday_list_boards'))
     assert.ok(!reading.includes('monday_write_back'))
     // The agent writes are always listed: the popup's "Allow writing" switch decides, at call time
-    for (const tool of ['monday_add_update', 'monday_update_item', 'monday_create_item', 'monday_move_item']) {
+    for (const tool of ['monday_add_update', 'monday_update_item', 'monday_create_item', 'monday_move_item', 'monday_edit_update', 'monday_delete_update']) {
       assert.ok(reading.includes(tool), tool)
     }
     assert.ok(!(await toolsWith({ MONDAY_BRIDGE_ALLOW_WRITE: 'yes' })).includes('monday_write_back'))

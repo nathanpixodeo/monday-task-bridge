@@ -10,13 +10,15 @@
  *   monday_update_item      – set column values: status, tags, people, dates, text, numbers, ...
  *   monday_create_item      – create an item on a board, or a subitem under an item
  *   monday_move_item        – move an item to another group
- *   monday_write_back       – add an update (and set the status) on one item; only with MONDAY_BRIDGE_ALLOW_WRITE=1
+ *   monday_edit_update      – replace the text of an update or reply
+ *   monday_delete_update    – delete an update or reply (destructive; agent CLIs always ask)
+ *   monday_write_back      – add an update (and set the status) on one item; only with MONDAY_BRIDGE_ALLOW_WRITE=1
  *   monday_get_task         – retrieve stored snapshot (optional boardId/itemId)
  *   monday_get_image        – return original image bytes as ImageContent
  *   monday_list_tasks       – list stored snapshots
  *   monday_bridge_status    – bridge health/connection status
  *
- * The four agent writes are always listed, but run only while "Allow writing" is on in the extension popup; otherwise
+ * The six agent writes are always listed, but run only while "Allow writing" is on in the extension popup; otherwise
  * they return WRITE_DISABLED. The bridge and the extension both check the switch.
  *
  * The HTTP bridge is started automatically (detached) when a tool needs it and it is not
@@ -338,6 +340,38 @@ mcp.tool(
     group: z.string().describe("The group's title or id"),
   },
   async (args) => writeVia({ op: 'move-item', ...args })
+)
+
+mcp.tool(
+  'monday_edit_update',
+  'Replace the text of one update (or reply) on a monday item; monday decides whether this account may edit it. ' +
+    'The new text replaces the whole update, written as with monday_add_update. People in mentions are tagged where ' +
+    'the body writes "@Their Full Name", but monday does not notify them again.' + WRITES_NOTE,
+  {
+    accountHost: accountHostArg,
+    boardId: z.string().describe('The board of the item'),
+    itemId: z.string().describe('The item the update is on'),
+    updateId: z.string().describe('The update or reply to edit'),
+    body: z.string().describe('The new text of the update'),
+    mentions: z.array(z.string()).optional()
+      .describe('People to tag in the new text: "me", user ids, emails, or full names (a name must match exactly one user)'),
+  },
+  async (args) => writeVia({ op: 'edit-update', ...args })
+)
+
+mcp.tool(
+  'monday_delete_update',
+  'Delete one update (or reply) on a monday item for good, with its replies; monday decides whether this account may ' +
+    'delete it. Agent CLIs always ask the user before running this tool. Returns the deleted text, so it can be ' +
+    'posted again.' + WRITES_NOTE,
+  {
+    accountHost: accountHostArg,
+    boardId: z.string().describe('The board of the item'),
+    itemId: z.string().describe('The item the update is on'),
+    updateId: z.string().describe('The update or reply to delete'),
+  },
+  { destructiveHint: true },
+  async (args) => writeVia({ op: 'delete-update', ...args })
 )
 
 // -- monday_write_back ------------------------------------------------------

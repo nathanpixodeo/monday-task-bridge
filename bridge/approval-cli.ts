@@ -1,13 +1,14 @@
 /**
- * bridge/approval-cli.ts – choose whether agent CLIs ask before each monday read.
+ * bridge/approval-cli.ts – choose whether agent CLIs ask before each monday read, and before adding or editing an update.
  *
  * Usage:  node dist/bridge/approval-cli.js auto|manual|status
  *
- *   auto    Claude Code, Codex and agy run the bridge's read tools without asking.
+ *   auto    Claude Code, Codex and agy run the bridge's read tools, monday_add_update and monday_edit_update
+ *           without asking.
  *   manual  Removes those rules, so each CLI asks again (its default).
  *   status  Shows the mode of each CLI.
  *
- * Only the read tools get a rule; the write tools always ask. MONDAY_BRIDGE_CLIENTS limits the CLIs it changes,
+ * Deleting an update, and every item write, always asks. MONDAY_BRIDGE_CLIENTS limits the CLIs it changes,
  * as in the installer. Claude Code uses the profile in CLAUDE_CONFIG_DIR, Codex the folder in CODEX_HOME.
  */
 
@@ -62,8 +63,9 @@ async function main(): Promise<void> {
   const command = process.argv[2]
   if (command !== 'auto' && command !== 'manual' && command !== 'status') {
     process.stderr.write('Usage: approval-cli auto|manual|status\n')
-    process.stderr.write('  auto    Agent CLIs read monday tasks without asking each time.\n')
-    process.stderr.write('  manual  Agent CLIs ask before each read (their default).\n')
+    process.stderr.write('  auto    Agent CLIs read monday tasks, and add or edit updates, without asking each time.\n')
+    process.stderr.write('          Deleting an update and item writes still ask.\n')
+    process.stderr.write('  manual  Agent CLIs ask before each read and each write (their default).\n')
     process.stderr.write('  status  Show the mode of each agent CLI.\n')
     process.exit(1)
   }

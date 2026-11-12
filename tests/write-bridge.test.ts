@@ -61,6 +61,8 @@ test('the bridge relays an agent write only while "Allow writing" is on, and the
     }
 
     const update = { op: 'update-item', accountHost: 'team.monday.com', boardId: '123', itemId: '456', columns: { Status: 'Done', Tags: { add: ['urgent'] } } }
+    const editUpdate = { op: 'edit-update', accountHost: 'team.monday.com', boardId: '123', itemId: '456', updateId: '77', body: 'Fixed typo', mentions: ['me'] }
+    const deleteUpdate = { op: 'delete-update', accountHost: 'team.monday.com', boardId: '123', itemId: '456', updateId: '77' }
 
     // An extension from before agent writes is asked to reload, and nothing reaches it
     await connect(['assignedTasks', 'boardFilter', 'writeBack'])
@@ -69,8 +71,17 @@ test('the bridge relays an agent write only while "Allow writing" is on, and the
     assert.match((await old.json() as { error: string }).error, /^EXTENSION_UPDATE_REQUIRED/)
     assert.equal((await health()).writeSupported, false)
 
+    // An extension that writes but cannot edit or delete updates is asked to reload for those two only
+    await connect(['assignedTasks', 'boardFilter', 'writeBack', 'write'], false)
+    for (const body of [editUpdate, deleteUpdate]) {
+      const res = await send(body, adminHeaders)
+      assert.equal(res.status, 502)
+      assert.match((await res.json() as { error: string }).error, /^EXTENSION_UPDATE_REQUIRED: .*edit or delete monday updates/)
+    }
+    assert.equal((await send(update, adminHeaders)).status, 403)
+
     // With the switch off, the bridge refuses before the extension is asked
-    const extension = await connect(['assignedTasks', 'boardFilter', 'writeBack', 'write'], false)
+    const extension = await connect(['assignedTasks', 'boardFilter', 'writeBack', 'write', 'updateEdits'], false)
     assert.deepEqual([(await health()).writeSupported, (await health()).writeEnabled], [true, false])
     const off = await send(update, adminHeaders)
     assert.equal(off.status, 403)
@@ -88,7 +99,12 @@ test('the bridge relays an agent write only while "Allow writing" is on, and the
       { op: 'add-update', boardId: '123', itemId: '456', body: '  ' },
       { op: 'add-update', boardId: '123', itemId: '456', body: 'Hi', mentions: ['  '] },
       { op: 'create-item', boardId: '123', name: 'x', parentItemId: '456', group: 'Done' },
-      { op: 'move-item', boardId: '123', itemId: '456' }
+      { op: 'move-item', boardId: '123', itemId: '456' },
+      { ...editUpdate, body: '  ' },
+      { ...editUpdate, updateId: '7a' },
+      { ...editUpdate, replyToUpdateId: '78' },
+      { ...deleteUpdate, body: 'x' },
+      { op: 'delete-update', boardId: '123', itemId: '456' }
     ]) {
       assert.equal((await send(bad, adminHeaders)).status, 400, JSON.stringify(bad))
     }
@@ -106,6 +122,20 @@ test('the bridge relays an agent write only while "Allow writing" is on, and the
     const response = await written
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), result)
+
+    // Editing and deleting an update go the same way; a delete hands back the text it removed
+    for (const [body, answer] of [
+      [editUpdate, { op: 'edit-update', accountHost: 'team.monday.com', boardId: '123', itemId: '456', updateId: '77', mentioned: ['Me'] }],
+      [deleteUpdate, { op: 'delete-update', accountHost: 'team.monday.com', boardId: '123', itemId: '456', updateId: '77', deletedBody: 'Old text' }]
+    ] as const) {
+      const pending = send(body, adminHeaders)
+      const next = await extension.nextCommand()
+      assert.deepEqual(next, { type: 'write', requestId: next.requestId, ...body })
+      extension.ws.send(JSON.stringify({ type: 'write-result', requestId: next.requestId, result: answer }))
+      const res = await pending
+      assert.equal(res.status, 200)
+      assert.deepEqual(await res.json(), answer)
+    }
 
     // The agent's name comes along for the popup's activity log; an odd one is dropped
     for (const [header, agent] of [['codex-mcp-client', 'codex-mcp-client'], ['bad	name', undefined]] as const) {

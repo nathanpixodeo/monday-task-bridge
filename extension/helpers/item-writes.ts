@@ -1,8 +1,8 @@
 /**
  * Writing to monday as the signed-in user, for agents while "Allow writing" is on in the popup: updates and replies,
- * column values (status, tags, people, dates, ...), new items and subitems, and moving an item to another group.
- * Nothing is deleted or archived. Kept free of Chrome APIs so it can be unit-tested; the caller supplies the
- * session-authenticated GraphQL call.
+ * column values (status, tags, people, dates, ...), new items and subitems, moving an item to another group, and
+ * editing or deleting an update. No item is ever deleted or archived. Kept free of Chrome APIs so it can be
+ * unit-tested; the caller supplies the session-authenticated GraphQL call.
  */
 
 import type { ColumnInput, ColumnInputs, WriteRequest, WriteResult } from '../../shared/types'
@@ -21,7 +21,20 @@ const ITEM_QUERY = `query WriteItem($ids: [ID!]) {
 }`
 
 const UPDATE_QUERY = `query WriteUpdateOf($ids: [ID!]) {
-  updates(ids: $ids) { id item_id }
+  updates(ids: $ids) { id item_id text_body }
+}`
+
+// A reply is not always found by its id among updates; it is among its item's updates' replies
+const ITEM_UPDATES_QUERY = `query WriteItemUpdates($ids: [ID!]) {
+  items(ids: $ids) { updates(limit: 100) { id replies { id text_body } } }
+}`
+
+const EDIT_UPDATE = `mutation WriteEditUpdate($id: ID!, $body: String!) {
+  edit_update(id: $id, body: $body) { id }
+}`
+
+const DELETE_UPDATE = `mutation WriteDeleteUpdate($id: ID!) {
+  delete_update(id: $id) { id }
 }`
 
 // A non-null list element fits both an [UpdateMention] and an [UpdateMention!] argument
@@ -449,6 +462,31 @@ export function bodyWithMentions(host: string, html: string, people: Person[]): 
   return leading.length ? `${leading.join(' ')} ${body}` : body
 }
 
+// ─── Updates ─────────────────────────────────────────────────────────
+
+const textOf = (value: unknown) => (typeof value === 'string' ? value : '')
+
+/**
+ * The plain text of an update on the item, checked before anything is written to it. With `replies`, a reply to one
+ * of the item's updates counts too. An update on another item, or none, is not a target.
+ */
+async function readUpdateOn(graphql: Graphql, host: string, itemId: string, updateId: string, replies: boolean): Promise<string> {
+  const data = await graphql(host, UPDATE_QUERY, { ids: [updateId] })
+  const update = ((data as { updates?: unknown[] } | null)?.updates ?? [])[0]
+  if (isRecord(update)) {
+    if (idOf(update.item_id) === itemId) return textOf(update.text_body)
+  } else if (replies) {
+    const items = await graphql(host, ITEM_UPDATES_QUERY, { ids: [itemId] })
+    const item = ((items as { items?: unknown[] } | null)?.items ?? [])[0]
+    for (const parent of isRecord(item) && Array.isArray(item.updates) ? item.updates : []) {
+      for (const reply of isRecord(parent) && Array.isArray(parent.replies) ? parent.replies : []) {
+        if (isRecord(reply) && idOf(reply.id) === updateId) return textOf(reply.text_body)
+      }
+    }
+  }
+  throw new WriteTargetError(`Update ${updateId} is not an update on item ${itemId}`)
+}
+
 // ─── Writes ──────────────────────────────────────────────────────────
 
 /** What the extension sends back, plus the item's name for the popup's activity log (never sent to the bridge). */
@@ -461,13 +499,8 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
   switch (request.op) {
     case 'add-update': {
       const target = await readTarget(graphql, host, request.boardId, request.itemId)
-      if (request.replyToUpdateId !== undefined) {
-        const data = await graphql(host, UPDATE_QUERY, { ids: [request.replyToUpdateId] })
-        const update = ((data as { updates?: unknown[] } | null)?.updates ?? [])[0] as { item_id?: unknown } | undefined
-        if (!update || idOf(update.item_id) !== request.itemId) {
-          throw new WriteTargetError(`Update ${request.replyToUpdateId} is not an update on item ${request.itemId}`)
-        }
-      }
+      // monday takes replies to an update only, not to a reply
+      if (request.replyToUpdateId !== undefined) await readUpdateOn(graphql, host, request.itemId, request.replyToUpdateId, false)
       // Every person is resolved before anything is written, so a name that matches no one stops the update
       const people = request.mentions?.length ? await mentionedPeople(graphql, host, request.boardId, request.mentions) : []
       const created = await graphql(host, ADD_UPDATE, {
@@ -540,6 +573,39 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
       const group = await findGroup(graphql, host, request.boardId, request.group)
       await graphql(host, MOVE_ITEM, { itemId: request.itemId, groupId: group.id })
       return { op: request.op, accountHost: host, boardId: request.boardId, itemId: request.itemId, group, ...named(target.name) }
+    }
+
+    case 'edit-update': {
+      const target = await readTarget(graphql, host, request.boardId, request.itemId)
+      await readUpdateOn(graphql, host, request.itemId, request.updateId, true)
+      // Resolved before the edit, so a name that matches no one leaves the update as it was
+      const people = request.mentions?.length ? await mentionedPeople(graphql, host, request.boardId, request.mentions) : []
+      await graphql(host, EDIT_UPDATE, { id: request.updateId, body: bodyWithMentions(host, updateBody(request.body), people) })
+      return {
+        op: request.op,
+        accountHost: host,
+        boardId: request.boardId,
+        itemId: request.itemId,
+        updateId: request.updateId,
+        ...(people.length ? { mentioned: people.map((person) => person.name) } : {}),
+        ...named(target.name)
+      }
+    }
+
+    case 'delete-update': {
+      const target = await readTarget(graphql, host, request.boardId, request.itemId)
+      const deletedBody = await readUpdateOn(graphql, host, request.itemId, request.updateId, true)
+      await graphql(host, DELETE_UPDATE, { id: request.updateId })
+      return {
+        op: request.op,
+        accountHost: host,
+        boardId: request.boardId,
+        itemId: request.itemId,
+        updateId: request.updateId,
+        // The bridge takes up to 100,000 characters of it
+        deletedBody: deletedBody.slice(0, 100_000),
+        ...named(target.name)
+      }
     }
   }
 }

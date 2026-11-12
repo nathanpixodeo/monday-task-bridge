@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  AUTO_TOOLS,
   READ_TOOLS,
   agyRules,
   allowRulesState,
@@ -11,14 +12,26 @@ import {
   codexRulesState,
 } from '../bridge/approval.js'
 
-test('read rules never cover a write tool', () => {
-  for (const tool of ['monday_write_back', 'monday_add_update', 'monday_update_item', 'monday_create_item', 'monday_move_item']) {
-    assert.ok(!(READ_TOOLS as readonly string[]).includes(tool), tool)
-    assert.ok(claudeRules.every((rule) => !rule.endsWith(tool)), tool)
-    assert.ok(agyRules.every((rule) => !rule.includes(tool)), tool)
+test('auto rules cover the reads and adding or editing an update, never deleting one or an item write', () => {
+  for (const tool of ['monday_write_back', 'monday_delete_update', 'monday_update_item', 'monday_create_item', 'monday_move_item']) {
+    assert.ok(!(AUTO_TOOLS as readonly string[]).includes(tool), tool)
+    assert.ok(claudeRules.every((rule) => !rule.endsWith(`__${tool}`)), tool)
+    assert.ok(agyRules.every((rule) => !rule.endsWith(`/${tool})`)), tool)
   }
+  for (const tool of ['monday_add_update', 'monday_edit_update']) {
+    assert.ok(!(READ_TOOLS as readonly string[]).includes(tool), tool)
+    assert.ok(claudeRules.includes(`mcp__monday-task-bridge__${tool}`), tool)
+    assert.ok(agyRules.includes(`mcp(monday-task-bridge/${tool})`), tool)
+  }
+  assert.equal(claudeRules.length, READ_TOOLS.length + 2)
   assert.equal(claudeRules[0], 'mcp__monday-task-bridge__monday_read_task')
   assert.equal(agyRules[0], 'mcp(monday-task-bridge/monday_read_task)')
+})
+
+test('settings with the read rules only, from before update edits, read as partial until auto runs again', () => {
+  const readsOnly = JSON.stringify({ permissions: { allow: READ_TOOLS.map((tool) => `mcp__monday-task-bridge__${tool}`) } })
+  assert.equal(allowRulesState(readsOnly, claudeRules), 'partial')
+  assert.equal(allowRulesState(applyAllowRules(readsOnly, claudeRules, 'auto'), claudeRules), 'auto')
 })
 
 test('applyAllowRules adds the rules once and keeps every other setting', () => {

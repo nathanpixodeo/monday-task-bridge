@@ -1,9 +1,10 @@
 /**
- * bridge/approval.ts – the permission rules that let agent CLIs run the bridge's read tools without asking.
+ * bridge/approval.ts – the permission rules that let agent CLIs run the bridge's read tools, and its add and edit
+ * update tools, without asking.
  *
  * Each function takes a CLI's config text and returns it with the rules added (`auto`) or removed (`manual`).
- * Only the read tools get a rule: the write tools (monday_add_update, monday_update_item, monday_create_item,
- * monday_move_item, monday_write_back) always ask.
+ * Only AUTO_TOOLS get a rule: monday_delete_update, monday_update_item, monday_create_item, monday_move_item and
+ * monday_write_back always ask.
  */
 
 export type ApprovalMode = 'auto' | 'manual'
@@ -22,11 +23,17 @@ export const READ_TOOLS = [
   'monday_bridge_status',
 ] as const
 
+/** Writes that run without asking in `auto` mode: adding an update and editing one. Deleting always asks. */
+export const AUTO_WRITE_TOOLS = ['monday_add_update', 'monday_edit_update'] as const
+
+/** Every tool `auto` mode lets agent CLIs run without asking. */
+export const AUTO_TOOLS = [...READ_TOOLS, ...AUTO_WRITE_TOOLS] as const
+
 /** Claude Code settings.json: permissions.allow entries `mcp__<server>__<tool>`. */
-export const claudeRules = READ_TOOLS.map((tool) => `mcp__${SERVER_NAME}__${tool}`)
+export const claudeRules = AUTO_TOOLS.map((tool) => `mcp__${SERVER_NAME}__${tool}`)
 
 /** agy (Antigravity CLI) settings.json: permissions.allow entries `mcp(<server>/<tool>)`. */
-export const agyRules = READ_TOOLS.map((tool) => `mcp(${SERVER_NAME}/${tool})`)
+export const agyRules = AUTO_TOOLS.map((tool) => `mcp(${SERVER_NAME}/${tool})`)
 
 interface PermissionSettings {
   permissions?: { allow?: unknown[] } & Record<string, unknown>
@@ -73,7 +80,7 @@ export function codexHasServer(text: string): boolean {
 function readToolOf(line: string): string | undefined {
   const match = TOOL_TABLE.exec(line)
   const tool = match?.[1] ?? match?.[2]
-  return tool && (READ_TOOLS as readonly string[]).includes(tool) ? tool : undefined
+  return tool && (AUTO_TOOLS as readonly string[]).includes(tool) ? tool : undefined
 }
 
 export function applyCodexRules(text: string, mode: ApprovalMode): string {
@@ -86,7 +93,7 @@ export function applyCodexRules(text: string, mode: ApprovalMode): string {
   }
   while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop()
   if (mode === 'auto') {
-    for (const tool of READ_TOOLS) {
+    for (const tool of AUTO_TOOLS) {
       kept.push('', `[mcp_servers.${SERVER_NAME}.tools.${tool}]`, 'approval_mode = "approve"')
     }
   }
@@ -100,5 +107,5 @@ export function codexRulesState(text: string): ApprovalState {
     if (ANY_TABLE.test(line)) tool = readToolOf(line)
     else if (tool && /^\s*approval_mode\s*=\s*"approve"/.test(line)) approved.add(tool)
   }
-  return stateOf(approved.size, READ_TOOLS.length)
+  return stateOf(approved.size, AUTO_TOOLS.length)
 }

@@ -86,6 +86,71 @@ const tagOf = (id: number, name: string) =>
   `<a class="user_mention_editor router" href="https://${HOST}/users/${id}" data-mention-type="User" ` +
   `data-mention-id="${id}" target="_blank" rel="noopener noreferrer">@${name}</a>`
 
+/** Update 77 is on item 456, reply 88 answers it, and update 99 is on another item. */
+function updatesFake() {
+  return fakeGraphql({
+    WriteItem: () => ({ items: [{ ...itemOn('123').items[0], name: 'Withdraw' }] }),
+    WriteUpdateOf: (call) => {
+      const id = (call.variables.ids as string[])[0]
+      if (id === '77') return { updates: [{ id, item_id: '456', text_body: 'Old text' }] }
+      if (id === '99') return { updates: [{ id, item_id: '999', text_body: 'Elsewhere' }] }
+      return { updates: [] }
+    },
+    WriteItemUpdates: () => ({ items: [{ updates: [{ id: '77', replies: [{ id: '88', text_body: 'Old reply' }] }] }] }),
+    WriteMe: () => ({ me: { id: '10' } }),
+    WriteUsersByName: () => ({ users: [] }),
+    WriteUsersById: () => ({ users: [{ id: '10', name: 'Nathan' }] }),
+    WriteEditUpdate: (call) => ({ edit_update: { id: call.variables.id } }),
+    WriteDeleteUpdate: (call) => ({ delete_update: { id: call.variables.id } })
+  })
+}
+
+test('edits an update or a reply on the item, with its text written as for a new update', async () => {
+  const fake = updatesFake()
+  const edited = await performWrite(fake.graphql, HOST, {
+    op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', body: 'Fixed <b>\n@Nathan see PR', mentions: ['me']
+  })
+  assert.deepEqual(edited, {
+    op: 'edit-update', accountHost: HOST, boardId: '123', itemId: '456', updateId: '77', mentioned: ['Nathan'], itemName: 'Withdraw'
+  })
+  const call = fake.calls.find((entry) => entry.query.includes('mutation WriteEditUpdate'))!
+  assert.deepEqual(call.variables, { id: '77', body: `Fixed &lt;b&gt;<br>${tagOf(10, 'Nathan')} see PR` })
+
+  const reply = await performWrite(fake.graphql, HOST, { op: 'edit-update', boardId: '123', itemId: '456', updateId: '88', body: 'Thanks' })
+  assert.equal(reply.updateId, '88')
+  assert.deepEqual(fake.calls.at(-1)!.variables, { id: '88', body: 'Thanks' })
+})
+
+test('deletes an update or a reply on the item, and hands back the text it had', async () => {
+  const fake = updatesFake()
+  const deleted = await performWrite(fake.graphql, HOST, { op: 'delete-update', boardId: '123', itemId: '456', updateId: '77' })
+  assert.deepEqual(deleted, {
+    op: 'delete-update', accountHost: HOST, boardId: '123', itemId: '456', updateId: '77', deletedBody: 'Old text', itemName: 'Withdraw'
+  })
+  assert.deepEqual(fake.calls.at(-1)!.variables, { id: '77' })
+
+  const reply = await performWrite(fake.graphql, HOST, { op: 'delete-update', boardId: '123', itemId: '456', updateId: '88' })
+  assert.equal(reply.deletedBody, 'Old reply')
+})
+
+test('never edits or deletes an update that is not on the item, and replies only to an update, not a reply', async () => {
+  const fake = updatesFake()
+  for (const updateId of ['99', '55']) {
+    await assert.rejects(performWrite(fake.graphql, HOST, { op: 'edit-update', boardId: '123', itemId: '456', updateId, body: 'x' }), WriteTargetError)
+    await assert.rejects(performWrite(fake.graphql, HOST, { op: 'delete-update', boardId: '123', itemId: '456', updateId }), WriteTargetError)
+  }
+  await assert.rejects(
+    performWrite(fake.graphql, HOST, { op: 'add-update', boardId: '123', itemId: '456', body: 'x', replyToUpdateId: '88' }),
+    WriteTargetError
+  )
+  for (const name of ['WriteEditUpdate', 'WriteDeleteUpdate', 'WriteAddUpdate']) assert.ok(!fake.names().includes(name), name)
+  // A name that matches no one leaves the update as it was
+  await assert.rejects(performWrite(fake.graphql, HOST, {
+    op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', body: 'x', mentions: ['Nobody Here']
+  }), /No monday user is named "Nobody Here"/)
+  assert.ok(!fake.names().includes('WriteEditUpdate'))
+})
+
 test('tags people in an update where the body names them, else at its start, and notifies each once', async () => {
   const users = [
     { id: 10, name: 'Me <Admin>', email: 'me@team.com' },

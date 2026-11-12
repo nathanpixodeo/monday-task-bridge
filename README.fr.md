@@ -100,7 +100,7 @@ L'installeur ajoute une commande `monday-bridge` au dossier global de npm, comme
 | `monday-bridge stop` | Arrête le bridge. Une session d'agent ouverte le redémarre dans les 15 secondes ; sinon, la prochaine session le fait. |
 | `monday-bridge run` | Lance le bridge dans la fenêtre courante, avec son journal à l'écran. Ctrl+C l'arrête. |
 | `monday-bridge pair 123456` | Approuve le code à 6 chiffres affiché dans la popup de l'extension. |
-| `monday-bridge approval auto` | Permet aux agents de lire monday sans demande de confirmation oui/non à chaque fois. `manual` les fait demander de nouveau ; `status` affiche le mode. Voir [Mode d'approbation](#mode-dapprobation--auto-ou-manuel). |
+| `monday-bridge approval auto` | Permet aux agents de lire monday, et d'ajouter ou de modifier des mises à jour, sans demande de confirmation oui/non à chaque fois. `manual` les fait demander de nouveau ; `status` affiche le mode. Voir [Mode d'approbation](#mode-dapprobation--auto-ou-manuel). |
 | `monday-bridge help` | Liste les commandes. |
 
 La commande est un lien vers le dossier d'installation : les mises à jour ne demandent donc aucune réinstallation.
@@ -156,8 +156,8 @@ Définissez ces variables d'environnement avant de lancer l'installeur :
 
 Par défaut, une CLI d'agent vous demande d'approuver chaque appel d'outil MCP : chaque lecture monday s'arrête donc sur une demande de confirmation oui/non. Le mode d'approbation règle ce comportement pour les outils du bridge, dans Claude Code, Codex et agy à la fois :
 
-- **`auto`** : l'agent lit les tâches, les tableaux (boards) et les images sans demander. L'installeur active ce mode.
-- **`manual`** : l'agent demande avant chaque lecture, comme les CLI le font par défaut.
+- **`auto`** : l'agent lit les tâches, les tableaux (boards) et les images, et ajoute ou modifie des mises à jour, sans demander. L'installeur active ce mode.
+- **`manual`** : l'agent demande avant chaque lecture et chaque écriture, comme les CLI le font par défaut.
 
 Vous pouvez changer de mode à tout moment, depuis n'importe quel dossier. Redémarrez ensuite les sessions d'agent ouvertes :
 
@@ -167,9 +167,9 @@ monday-bridge approval manual    # demander avant chaque lecture
 monday-bridge approval status    # afficher le mode de chaque CLI
 ```
 
-`auto` ne couvre que les outils de lecture. Les outils d'écriture demandent toujours une confirmation. La commande écrit les règles suivantes, et `manual` les retire :
+`auto` couvre les outils de lecture, `monday_add_update` et `monday_edit_update`. Supprimer une mise à jour et les écritures sur les éléments (`monday_update_item`, `monday_create_item`, `monday_move_item`) demandent toujours une confirmation. Des réglages écrits par un ancien `auto` ne couvrent que la lecture, et `status` les affiche comme `partial` : relancez `monday-bridge approval auto`. La commande écrit les règles suivantes, et `manual` les retire :
 
-| CLI | Fichier | Règle pour chaque outil de lecture |
+| CLI | Fichier | Règle pour chaque outil couvert par `auto` |
 | --- | --- | --- |
 | Claude Code | `settings.json` dans le dossier du profil (`~/.claude`, ou `CLAUDE_CONFIG_DIR`) | `permissions.allow`: `mcp__monday-task-bridge__monday_read_task` |
 | Codex | `config.toml` dans `~/.codex` (ou `CODEX_HOME`) | `[mcp_servers.monday-task-bridge.tools.monday_read_task]` avec `approval_mode = "approve"` |
@@ -204,10 +204,12 @@ L'écriture est désactivée tant que vous ne l'activez pas. Ouvrez la popup de 
 | `monday_update_item` | Modifie des colonnes en une seule fois, par titre ou id de colonne : un libellé de statut, des tags (une liste, ou `{add, remove}`), des personnes (e-mails, noms complets ou `"me"` ; une liste, ou `{add, remove}`), une date `YYYY-MM-DD` ou `YYYY-MM-DD HH:mm`, une timeline `{from, to}`, des nombres, du texte, du texte long, une case à cocher, des libellés de liste déroulante, un lien, ou le nom de l'élément. `null` vide une colonne. |
 | `monday_create_item` | Crée un élément dans un groupe (par titre ou id), ou un sous-élément sous `parentItemId`, et peut remplir ses colonnes. |
 | `monday_move_item` | Déplace un élément vers un autre groupe (par titre ou id). |
+| `monday_edit_update` | Remplace le texte d'une mise à jour ou d'une réponse (`updateId`) sur un élément. Le texte est écrit comme pour une nouvelle mise à jour ; les personnes de `mentions` sont mentionnées, mais monday ne les notifie pas de nouveau. monday décide si votre compte peut la modifier. |
+| `monday_delete_update` | Supprime définitivement une mise à jour ou une réponse (`updateId`) sur un élément, avec ses réponses, et renvoie le texte qu'elle avait (`deletedBody`), pour pouvoir la republier. monday décide si votre compte peut la supprimer. |
 
-Rien n'est supprimé ni archivé. Un tag manquant n'est créé que si l'agent passe `createMissingTags`. Un libellé de statut ou de liste déroulante manquant n'est créé que si l'agent passe `createMissingLabels`. Aucune écriture n'est retentée.
+Seule une mise à jour peut être supprimée, et seulement avec `monday_delete_update` ; aucun élément n'est supprimé ni archivé. Une mise à jour n'est modifiée ou supprimée que si elle est sur l'élément indiqué. Un tag manquant n'est créé que si l'agent passe `createMissingTags`. Un libellé de statut ou de liste déroulante manquant n'est créé que si l'agent passe `createMissingLabels`. Aucune écriture n'est retentée.
 
-Les agents voient toujours ces quatre outils. Quand l'interrupteur est désactivé, ils renvoient `WRITE_DISABLED`, et l'agent doit vous demander d'activer l'écriture. Le bridge et l'extension vérifient tous deux l'interrupteur. `monday-bridge status` l'affiche sur la ligne `Writing:`. Les CLI d'agents demandent une confirmation avant chaque écriture, même en mode d'approbation `auto`.
+Les agents voient toujours ces six outils. Quand l'interrupteur est désactivé, ils renvoient `WRITE_DISABLED`, et l'agent doit vous demander d'activer l'écriture. Le bridge et l'extension vérifient tous deux l'interrupteur. `monday-bridge status` l'affiche sur la ligne `Writing:`. En mode d'approbation `auto`, les CLI d'agents ajoutent et modifient des mises à jour sans demander, et demandent une confirmation avant toute autre écriture. Elles demandent toujours avant `monday_delete_update`, qui est aussi marqué destructif (`destructiveHint`). Une extension antérieure aux modifications répond `EXTENSION_UPDATE_REQUIRED` aux deux outils de mise à jour : rechargez-la dans `chrome://extensions`.
 
 `monday_write_back` est à part, pour Nexkit Agent Hub. Il ajoute une mise à jour à un élément et peut modifier sa colonne Statut (Status). Les agents ne le voient que si leur client MCP démarre le serveur avec `MONDAY_BRIDGE_ALLOW_WRITE=1`. L'installeur ne définit pas cette variable, et l'interrupteur de la popup ne s'applique pas à cet outil.
 
@@ -225,7 +227,7 @@ Le **power button** active et désactive la connexion. Quand il est désactivé,
 
 L'interrupteur **Allow writing**, sous le power button, permet aux agents de modifier monday ; voir [Écrire dans monday](#écrire-dans-monday). Il est désactivé par défaut, et il devient ambre quand il est activé.
 
-**Activity** (activité) liste les trois dernières actions des agents, lectures comme écritures. Chaque ligne montre l'action (Read, Update, Reply, Edit, Create, Move, Write back), la tâche, l'agent qui l'a demandée, quand, et comment elle s'est passée. **History** (historique) ouvre les cinquante dernières. Cliquez sur une ligne pour voir le détail : le texte d'une mise à jour et les personnes mentionnées, les colonnes modifiées et leurs valeurs, le groupe, les avertissements d'une lecture incomplète, ou l'erreur d'une écriture qui a échoué. **Open update** ouvre directement la mise à jour dans monday, et **Open task** la tâche ; la flèche au bout de chaque ligne ouvre aussi la tâche. Le nom de l'agent est celui que donne son client MCP, comme Claude Code, Codex ou agy ; un client qui n'en donne pas apparaît comme « Unknown agent ».
+**Activity** (activité) liste les trois dernières actions des agents, lectures comme écritures. Chaque ligne montre l'action (Read, Update, Reply, Edit, Create, Move, Edit update, Delete update, Write back), la tâche, l'agent qui l'a demandée, quand, et comment elle s'est passée. **History** (historique) ouvre les cinquante dernières. Cliquez sur une ligne pour voir le détail : le texte d'une mise à jour (le nouveau texte d'une mise à jour modifiée, l'ancien texte d'une mise à jour supprimée) et les personnes mentionnées, les colonnes modifiées et leurs valeurs, le groupe, les avertissements d'une lecture incomplète, ou l'erreur d'une écriture qui a échoué. **Open update** ouvre directement la mise à jour dans monday, et **Open task** la tâche ; la flèche au bout de chaque ligne ouvre aussi la tâche. Le nom de l'agent est celui que donne son client MCP, comme Claude Code, Codex ou agy ; un client qui n'en donne pas apparaît comme « Unknown agent ».
 
 ## Fonctionnement
 

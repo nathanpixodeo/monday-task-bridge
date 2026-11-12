@@ -20,9 +20,9 @@ export interface ActivityEntry {
   warnings: string[]
   /** Why a write failed. */
   error?: string
-  /** The text of the update added, cut at MAX_BODY_LENGTH. */
+  /** The text of the update added, the new text of one edited, or the text of one deleted; cut at MAX_BODY_LENGTH. */
   body?: string
-  /** The update added, for a quick link to it. */
+  /** The update added or edited, for a quick link to it. */
   updateUrl?: string
   /** The update this one replies to. */
   replyTo?: string
@@ -125,6 +125,18 @@ export function writeActivity(
     }
     case 'move-item':
       return { ...entry, group: result?.group?.title ?? request.group }
+    case 'edit-update':
+      return {
+        ...entry,
+        body: cut(request.body),
+        updateUrl: `${url}/posts/${request.updateId}`,
+        ...(result?.mentioned?.length ? { mentioned: result.mentioned } : request.mentions?.length ? { mentioned: request.mentions } : {})
+      }
+    case 'delete-update':
+      // The deleted text stays in the log, so the user can post it again; a failed delete keeps a link to the update
+      return result?.deletedBody !== undefined
+        ? { ...entry, body: cut(result.deletedBody) }
+        : { ...entry, updateUrl: `${url}/posts/${request.updateId}` }
   }
 }
 
@@ -178,6 +190,8 @@ const LABELS: Record<ActivityKind, string> = {
   'update-item': 'Edit',
   'create-item': 'Create',
   'move-item': 'Move',
+  'edit-update': 'Edit update',
+  'delete-update': 'Delete update',
   'write-back': 'Write back'
 }
 

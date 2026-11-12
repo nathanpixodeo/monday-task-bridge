@@ -160,6 +160,18 @@ export type WriteRequest = { accountHost?: string } & (
       createMissingTags?: boolean
     }
   | { op: 'move-item'; boardId: string; itemId: string; group: string }
+  | {
+      op: 'edit-update'
+      boardId: string
+      itemId: string
+      /** An update or a reply on the item. */
+      updateId: string
+      /** The new text; it replaces the whole update. */
+      body: string
+      /** People to tag in the new text; edit_update cannot notify them again. */
+      mentions?: string[]
+    }
+  | { op: 'delete-update'; boardId: string; itemId: string; updateId: string }
 )
 
 /** What the extension wrote: the item (or update) it touched, and what changed. */
@@ -168,8 +180,10 @@ export interface WriteResult {
   accountHost: string
   boardId: string
   itemId: string
-  /** The update added, for add-update. */
+  /** The update added, edited or deleted. */
   updateId?: string
+  /** The plain text of the update deleted, for delete-update, so it can be posted again. */
+  deletedBody?: string
   /** The names of the people tagged in the update, for add-update. */
   mentioned?: string[]
   /** The titles of the columns set, for update-item and create-item. */

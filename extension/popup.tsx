@@ -975,6 +975,8 @@ const PILL_COLORS: Record<ActivityKind, string> = {
   'update-item': 'bg-amber-400/10 text-amber-300 ring-amber-400/20',
   'create-item': 'bg-emerald-400/10 text-emerald-300 ring-emerald-400/20',
   'move-item': 'bg-cyan-400/10 text-cyan-300 ring-cyan-400/20',
+  'edit-update': 'bg-indigo-400/10 text-indigo-300 ring-indigo-400/25',
+  'delete-update': 'bg-rose-400/10 text-rose-300 ring-rose-400/25',
   'write-back': 'bg-fuchsia-400/10 text-fuchsia-300 ring-fuchsia-400/20'
 }
 
@@ -1006,6 +1008,10 @@ function summaryOf(entry: ActivityEntry): string {
       return entry.group ? `In ${entry.group}` : 'Created'
     case 'move-item':
       return entry.group ? `To ${entry.group}` : 'Moved'
+    case 'edit-update':
+      return entry.mentioned?.length ? `Edited, tagged ${entry.mentioned.length}` : 'Edited'
+    case 'delete-update':
+      return 'Deleted'
     case 'write-back':
       return entry.status ? `Status ${entry.status}` : 'Posted'
   }
@@ -1119,7 +1125,11 @@ function ActivityDetails({ entry, onClose }: { entry: ActivityEntry | null; onCl
               </div>
             )}
             {entry.body !== undefined && (
-              <Field label={entry.replyTo ? `Reply to update ${entry.replyTo}` : 'Update'}>
+              <Field
+                label={entry.replyTo
+                  ? `Reply to update ${entry.replyTo}`
+                  : entry.kind === 'edit-update' ? 'New text' : entry.kind === 'delete-update' ? 'Deleted text' : 'Update'}
+              >
                 <p className="max-h-48 overflow-y-auto rounded-lg bg-white/[0.04] px-2.5 py-2 whitespace-pre-wrap">{entry.body}</p>
               </Field>
             )}

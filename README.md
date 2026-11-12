@@ -98,7 +98,7 @@ The installer adds a `monday-bridge` command to npm's global folder, like the `c
 | `monday-bridge stop` | Stops the bridge. An open agent session starts it again within 15 seconds; otherwise the next session does. |
 | `monday-bridge run` | Runs the bridge in the current window, with its log on screen. Ctrl+C stops it. |
 | `monday-bridge pair 123456` | Approves the 6-digit code shown in the extension popup. |
-| `monday-bridge approval auto` | Lets agents read monday without a yes/no prompt each time. `manual` makes them ask again; `status` shows the mode. See [Approval mode](#approval-mode-auto-or-manual). |
+| `monday-bridge approval auto` | Lets agents read monday, and add or edit updates, without a yes/no prompt each time. `manual` makes them ask again; `status` shows the mode. See [Approval mode](#approval-mode-auto-or-manual). |
 | `monday-bridge help` | Lists the commands. |
 
 The command is a link to the install folder, so updates need no reinstall.
@@ -154,8 +154,8 @@ Set these environment variables before you run the installer:
 
 By default, an agent CLI asks you to approve every MCP tool call, so each monday read stops at a yes/no prompt. The approval mode decides this for the bridge's tools in Claude Code, Codex, and agy at once:
 
-- **`auto`**: the agent reads tasks, boards, and images without asking. The installer sets this mode.
-- **`manual`**: the agent asks before each read, as the CLIs do by default.
+- **`auto`**: the agent reads tasks, boards, and images, and adds or edits updates, without asking. The installer sets this mode.
+- **`manual`**: the agent asks before each read and each write, as the CLIs do by default.
 
 Switch at any time, from any folder, then restart open agent sessions:
 
@@ -165,9 +165,9 @@ monday-bridge approval manual    # ask before each read
 monday-bridge approval status    # show the mode of each CLI
 ```
 
-`auto` covers the read tools only. The write tools always ask. The command writes these rules, and `manual` removes them again:
+`auto` covers the read tools, `monday_add_update`, and `monday_edit_update`. Deleting an update and the item writes (`monday_update_item`, `monday_create_item`, `monday_move_item`) always ask. Settings written by an older `auto` cover the read tools only, and `status` shows them as `partial`: run `monday-bridge approval auto` again. The command writes these rules, and `manual` removes them again:
 
-| CLI | File | Rule for each read tool |
+| CLI | File | Rule for each tool `auto` covers |
 | --- | --- | --- |
 | Claude Code | `settings.json` in the profile folder (`~/.claude`, or `CLAUDE_CONFIG_DIR`) | `permissions.allow`: `mcp__monday-task-bridge__monday_read_task` |
 | Codex | `config.toml` in `~/.codex` (or `CODEX_HOME`) | `[mcp_servers.monday-task-bridge.tools.monday_read_task]` with `approval_mode = "approve"` |
@@ -202,10 +202,12 @@ Writing is off until you turn it on. Open the extension popup and switch on **Al
 | `monday_update_item` | Sets columns in one change, by column title or id: a status label, tags (a list, or `{add, remove}`), people (emails, full names, or `"me"`; a list, or `{add, remove}`), a date `YYYY-MM-DD` or `YYYY-MM-DD HH:mm`, a timeline `{from, to}`, numbers, text, long text, a checkbox, dropdown labels, a link, or the item name. `null` clears a column. |
 | `monday_create_item` | Creates an item in a group (by title or id), or a subitem under `parentItemId`, and can set its columns. |
 | `monday_move_item` | Moves an item to another group (by title or id). |
+| `monday_edit_update` | Replaces the text of an update or a reply (`updateId`) on an item. The text is written as for a new update; people in `mentions` are tagged, but monday does not notify them again. monday decides whether your account may edit it. |
+| `monday_delete_update` | Deletes an update or a reply (`updateId`) on an item for good, with its replies, and returns the text it had (`deletedBody`), so it can be posted again. monday decides whether your account may delete it. |
 
-Nothing is deleted or archived. A missing tag is created only when the agent passes `createMissingTags`. A missing status or dropdown label is created only when the agent passes `createMissingLabels`. No write is retried.
+Only an update is ever deleted, and only with `monday_delete_update`; no item is deleted or archived. An update is edited or deleted only when it is on the item given. A missing tag is created only when the agent passes `createMissingTags`. A missing status or dropdown label is created only when the agent passes `createMissingLabels`. No write is retried.
 
-Agents always see these four tools. While the switch is off, they return `WRITE_DISABLED`, and the agent should ask you to switch writing on. The bridge and the extension both check the switch. `monday-bridge status` shows it on the `Writing:` line. Agent CLIs ask before every write, even in `auto` approval mode.
+Agents always see these six tools. While the switch is off, they return `WRITE_DISABLED`, and the agent should ask you to switch writing on. The bridge and the extension both check the switch. `monday-bridge status` shows it on the `Writing:` line. In `auto` approval mode, agent CLIs add and edit updates without asking, and ask before every other write. They always ask before `monday_delete_update`, which is also marked destructive (`destructiveHint`). An extension from before edits answers `EXTENSION_UPDATE_REQUIRED` to the two update tools: reload it in `chrome://extensions`.
 
 `monday_write_back` is separate, for Nexkit Agent Hub. It adds an update to an item and can set its Status. Agents see it only when their MCP client starts the server with `MONDAY_BRIDGE_ALLOW_WRITE=1`. The installer does not set it, and the popup switch does not apply to it.
 
@@ -223,7 +225,7 @@ The **power button** turns the connection on and off. While it is off, reads fai
 
 The **Allow writing** switch, under the power button, lets agents edit monday; see [Writing to monday](#writing-to-monday). It is off by default, and it turns amber while it is on.
 
-**Activity** lists the last three things agents did, reads and writes alike. Each row shows the action (Read, Update, Reply, Edit, Create, Move, Write back), the task, which agent asked, when, and how it went. **History** opens the last fifty. Click a row to see the details: the text of an update and the people tagged, the columns set and their values, the group, the warnings of an incomplete read, or the error of a failed write. **Open update** goes straight to the update in monday, and **Open task** to the task; the arrow at the end of each row opens the task too. The agent name is the one its MCP client gives, such as Claude Code, Codex, or agy; a client that gives none shows as "Unknown agent".
+**Activity** lists the last three things agents did, reads and writes alike. Each row shows the action (Read, Update, Reply, Edit, Create, Move, Edit update, Delete update, Write back), the task, which agent asked, when, and how it went. **History** opens the last fifty. Click a row to see the details: the text of an update (the new text of an edited one, the old text of a deleted one) and the people tagged, the columns set and their values, the group, the warnings of an incomplete read, or the error of a failed write. **Open update** goes straight to the update in monday, and **Open task** to the task; the arrow at the end of each row opens the task too. The agent name is the one its MCP client gives, such as Claude Code, Codex, or agy; a client that gives none shows as "Unknown agent".
 
 ## How it works
 

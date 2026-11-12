@@ -349,16 +349,33 @@ export const WriteBodySchema = z.discriminatedUnion('op', [
     itemId: ItemIdSchema,
     group: GroupKeySchema,
   }).strict(),
+  z.object({
+    op: z.literal('edit-update'),
+    accountHost: AccountHostSchema.optional(),
+    boardId: ItemIdSchema,
+    itemId: ItemIdSchema,
+    updateId: ItemIdSchema,
+    body: z.string().trim().min(1).max(20_000),
+    mentions: NameListSchema.optional(),
+  }).strict(),
+  z.object({
+    op: z.literal('delete-update'),
+    accountHost: AccountHostSchema.optional(),
+    boardId: ItemIdSchema,
+    itemId: ItemIdSchema,
+    updateId: ItemIdSchema,
+  }).strict(),
 ]).refine((body) => !(body.op === 'create-item' && body.parentItemId !== undefined && body.group !== undefined), {
   message: 'A subitem goes under its parent item: parentItemId and group cannot be combined',
 })
 
 export const WriteResultSchema = z.object({
-  op: z.enum(['add-update', 'update-item', 'create-item', 'move-item']),
+  op: z.enum(['add-update', 'update-item', 'create-item', 'move-item', 'edit-update', 'delete-update']),
   accountHost: z.string().regex(MONDAY_HOST_RE),
   boardId: ItemIdSchema,
   itemId: ItemIdSchema,
   updateId: ItemIdSchema.optional(),
+  deletedBody: z.string().max(100_000).optional(),
   mentioned: z.array(z.string().max(300)).max(100).optional(),
   columnsSet: z.array(z.string().max(256)).max(50).optional(),
   group: z.object({ id: MondayKeySchema, title: z.string().max(1000) }).strict().optional(),
