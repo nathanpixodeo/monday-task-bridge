@@ -165,7 +165,7 @@ monday-bridge approval manual    # ask before each read
 monday-bridge approval status    # show the mode of each CLI
 ```
 
-`auto` covers the read tools, `monday_add_update`, and `monday_edit_update`. Deleting an update and the item writes (`monday_update_item`, `monday_create_item`, `monday_move_item`) always ask. Settings written by an older `auto` cover the read tools only, and `status` shows them as `partial`: run `monday-bridge approval auto` again. The command writes these rules, and `manual` removes them again:
+`auto` covers the read tools, `monday_add_update`, and `monday_edit_update`. Listing every item of a board (`monday_list_board_items`), deleting an update, and the item writes (`monday_update_item`, `monday_create_item`, `monday_move_item`) always ask. Settings written by an older `auto` cover the read tools only, and `status` shows them as `partial`: run `monday-bridge approval auto` again. The command writes these rules, and `manual` removes them again:
 
 | CLI | File | Rule for each tool `auto` covers |
 | --- | --- | --- |
@@ -175,7 +175,7 @@ monday-bridge approval status    # show the mode of each CLI
 
 `MONDAY_BRIDGE_CLIENTS` limits the CLIs the command changes. For another Claude Code profile, set `CLAUDE_CONFIG_DIR` first, as for the installer.
 
-The read tools are also marked read-only (`readOnlyHint`). In plan mode, Claude Code asks before any MCP tool that is not marked read-only, even when an allow rule covers it. With the mark, monday reads run in plan mode without a prompt too.
+The read tools are also marked read-only (`readOnlyHint`). In plan mode, Claude Code asks before any MCP tool that is not marked read-only, even when an allow rule covers it. With the mark, monday reads run in plan mode without a prompt too. `monday_list_board_items` is the one read without the mark and without a rule: it reads tasks assigned to other people, so every agent CLI asks you before each call, in every mode.
 
 ## What your agent can do
 
@@ -185,6 +185,7 @@ The read tools are also marked read-only (`readOnlyHint`). In plan mode, Claude 
 | `monday_read_open_task` | A fresh read of the task open in your active Chrome tab, or in the first open task tab. |
 | `monday_list_assigned_tasks` | A live list of the tasks assigned to you (any people column), with board, link, and columns. Optional `boardIds` reads only those boards. It checks up to 100 active boards and 5000 tasks (items and subitems) within 160 seconds. `complete` is false, and `warnings` say why, when a limit or an unreadable board cut the list. Not cached. |
 | `monday_list_boards` | The active boards you can be assigned on, with their workspace, to use as `boardIds` above. |
+| `monday_list_board_items` | Every item of one board (`boardId`), whoever it is assigned to, each with all its subitems, its group, and its columns. Optional `groups` reads only those groups, by title (case does not matter) or id; a group that does not exist fails with the names of the board's groups. Same limits as above. The agent CLI always asks you first, because the list holds other people's tasks. Then `monday_read_task` reads any of them in full. |
 | `monday_get_image` | The original PNG, JPEG, GIF, or WebP bytes of an attachment whose status is `ready`. |
 | `monday_get_task` | The latest cached snapshot, optionally filtered by `boardId` and/or `itemId`. |
 | `monday_list_tasks` | Summaries of the cached snapshots. |

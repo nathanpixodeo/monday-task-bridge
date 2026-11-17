@@ -223,6 +223,10 @@ export type BridgeToExtensionMessage =
       boardIds?: string[]
       /** List the boards to choose from, reading no task. */
       boardsOnly?: boolean
+      /** Read every item of the one board in `boardIds`, whoever it is assigned to. */
+      everyItem?: boolean
+      /** With `everyItem`, only these groups, by id or title. */
+      groups?: string[]
     }
   /**
    * Write to one item with the signed-in session: only ever sent for a write the bridge was asked for. `agent`, as

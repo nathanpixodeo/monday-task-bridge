@@ -19,9 +19,17 @@ export interface AssignedTasksOptions {
   boardIds?: string[]
   /** List the boards the user can be assigned on, with their workspace, and read no item. */
   boardsOnly?: boolean
+  /**
+   * Read every item of the one board in `boardIds`, whoever it is assigned to, each with all its subitems. Agents
+   * reach this through a tool their CLI always asks the user about, since it reads other people's tasks.
+   */
+  everyItem?: boolean
+  /** With `everyItem`, read only these groups, each named by its id or its title (case does not matter). */
+  groups?: string[]
 }
 
 const MAX_BOARD_IDS = 50
+const MAX_GROUPS = 20
 /** Items and subitems together: with every item's subitems, a large account passes 1000 well before its last board. */
 export const MAX_TASKS = 5000
 
@@ -79,12 +87,30 @@ const nextItemsQuery = (fields: string) => `query GetNextAssignedItems($cursor: 
   }
 }`
 
+// Every item of one group, for an everyItem read limited to some groups; its next pages come from nextItemsQuery.
+const groupItemsQuery = (fields: string) => `query GetGroupItems($ids: [ID!], $groupIds: [String]) {
+  boards(ids: $ids) {
+    groups(ids: $groupIds) {
+      items_page(limit: 100) {
+        cursor
+        items { ${fields} }
+      }
+    }
+  }
+}`
+
+const BOARD_GROUPS_QUERY = `query GetBoardGroups($ids: [ID!]) {
+  boards(ids: $ids) { id groups { id title } }
+}`
+
 interface FieldLevel {
   /** The board view's group and typed columns. */
   rich: boolean
   /** Each item's subitems. */
   subitems: boolean
   first: string
+  /** The first page of one group's items. */
+  group: string
   next: string
 }
 
@@ -97,7 +123,12 @@ const FIELD_LEVELS: readonly FieldLevel[] = [
   { rich: true, subitems: false, fields: RICH_ITEM_FIELDS },
   { rich: false, subitems: true, fields: `${PLAIN_ITEM_FIELDS} ${PLAIN_SUBITEM_FIELDS}` },
   { rich: false, subitems: false, fields: PLAIN_ITEM_FIELDS },
-].map(({ fields, ...level }) => ({ ...level, first: boardItemsQuery(fields), next: nextItemsQuery(fields) }))
+].map(({ fields, ...level }) => ({
+  ...level,
+  first: boardItemsQuery(fields),
+  group: groupItemsQuery(fields),
+  next: nextItemsQuery(fields)
+}))
 
 // The subitems board of a board, named in its subitems column's settings.
 const SUBITEM_BOARDS_QUERY = `query GetSubitemBoards($ids: [ID!]) {
@@ -149,14 +180,21 @@ function validateHost(host: string): string {
 }
 
 function validateOptions(options: AssignedTasksOptions = {}): Required<AssignedTasksOptions> {
-  const { maxBoards = 100, maxTasks = MAX_TASKS, deadlineMs = 160_000, boardIds = [], boardsOnly = false } = options
+  const {
+    maxBoards = 100, maxTasks = MAX_TASKS, deadlineMs = 160_000, boardIds = [], boardsOnly = false,
+    everyItem = false, groups = []
+  } = options
   if (!Number.isInteger(maxBoards) || maxBoards <= 0) throw new Error('maxBoards must be a positive integer')
   if (!Number.isInteger(maxTasks) || maxTasks <= 0) throw new Error('maxTasks must be a positive integer')
   if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new Error('deadlineMs must be a positive number')
   if (boardIds.length > MAX_BOARD_IDS) throw new Error(`boardIds may name at most ${MAX_BOARD_IDS} boards`)
   if (boardIds.some((id) => readId(id) === null)) throw new Error('boardIds must be numeric monday board ids')
   if (boardsOnly && boardIds.length > 0) throw new Error('boardsOnly and boardIds cannot be combined')
-  return { maxBoards, maxTasks, deadlineMs, boardIds, boardsOnly }
+  if (everyItem && (boardsOnly || boardIds.length !== 1)) throw new Error('everyItem reads exactly one board, named in boardIds')
+  if (groups.length > 0 && !everyItem) throw new Error('groups can only be read with everyItem')
+  if (groups.length > MAX_GROUPS) throw new Error(`groups may name at most ${MAX_GROUPS} groups`)
+  if (groups.some((group) => typeof group !== 'string' || !group.trim())) throw new Error('groups must be group ids or titles')
+  return { maxBoards, maxTasks, deadlineMs, boardIds, boardsOnly, everyItem, groups }
 }
 
 // ─── Response narrowing ──────────────────────────────────────────────
@@ -267,6 +305,47 @@ function firstBoardItemsPage(data: unknown): ItemsPage {
   return parseItemsPage(board.items_page)
 }
 
+function firstGroupItemsPage(data: unknown): ItemsPage {
+  const [board] = boardList(data)
+  if (!isObject(board)) throw new Error('monday API: board not returned')
+  const [group] = asArray(board.groups) ?? []
+  if (!isObject(group)) throw new Error('monday API: group not returned')
+  return parseItemsPage(group.items_page)
+}
+
+interface Group {
+  id: string
+  title: string
+}
+
+/**
+ * The board's groups the caller named, each by its id or else its title (trimmed, case does not matter), in the order
+ * named and without repeats. A name that matches no group rejects, listing the board's groups so it can be named again.
+ */
+function resolveGroups(boardId: string, data: unknown, names: readonly string[]): Group[] {
+  const [board] = boardList(data)
+  const values = isObject(board) ? asArray(board.groups) : null
+  if (!values) throw new Error(`monday API: groups of board ${boardId} not returned`)
+  const groups: Group[] = []
+  for (const value of values) {
+    if (!isObject(value)) continue
+    const id = readText(value.id)
+    if (KEY.test(id)) groups.push({ id, title: readText(value.title) })
+  }
+  const chosen: Group[] = []
+  for (const name of names) {
+    const wanted = name.trim()
+    const group = groups.find((g) => g.id === wanted) ??
+      groups.find((g) => g.title.toLowerCase() === wanted.toLowerCase())
+    if (!group) {
+      const known = groups.map((g) => g.title || g.id).join(', ') || 'none'
+      throw new Error(`Group "${wanted}" not found on board ${boardId}; its groups: ${known}`)
+    }
+    if (!chosen.includes(group)) chosen.push(group)
+  }
+  return chosen
+}
+
 function nextItemsPage(data: unknown): ItemsPage {
   if (!isObject(data)) throw new Error('monday API: unexpected next items page')
   return parseItemsPage(data.next_items_page)
@@ -315,7 +394,9 @@ function subitemBoardIds(settings: unknown): string[] {
  * Every item on the user's active boards where any people column contains them, filtered by monday
  * (`assigned_to_me`) so unassigned items are never downloaded, each followed by its subitems. On chosen boards, the
  * subitems assigned to the user are read too, with their parent item when the board read did not list it.
- * Read-only: only queries are sent. A failing board becomes a warning; only a failing user query rejects.
+ * With `everyItem`, every item of the one chosen board (or of the named groups) instead, whoever it is assigned to.
+ * Read-only: only queries are sent. A failing board becomes a warning; only a failing user query rejects, and with
+ * `everyItem` a board or group that cannot be found.
  */
 export async function readAssignedTasks(
   host: string,
@@ -323,7 +404,7 @@ export async function readAssignedTasks(
   options?: AssignedTasksOptions
 ): Promise<AssignedTasks> {
   const accountHost = validateHost(host)
-  const { maxBoards, maxTasks, deadlineMs, boardIds, boardsOnly } = validateOptions(options)
+  const { maxBoards, maxTasks, deadlineMs, boardIds, boardsOnly, everyItem, groups: groupNames } = validateOptions(options)
   const deadline = Date.now() + deadlineMs
 
   const warnings: string[] = []
@@ -333,7 +414,7 @@ export async function readAssignedTasks(
     if (!warnings.includes(warning)) warnings.push(warning)
   }
   const deadlineWarning = `Stopped after the ${deadlineMs} ms time limit; remaining boards were not checked`
-  const taskCapWarning = `Stopped at ${maxTasks} tasks; more assigned tasks may exist`
+  const taskCapWarning = `Stopped at ${maxTasks} tasks; more ${everyItem ? '' : 'assigned '}tasks may exist`
 
   const chosen = boardIds.length > 0
   const initial = chosen
@@ -461,13 +542,21 @@ export async function readAssignedTasks(
     return true
   }
 
-  /** Reads every page of one board; false when a cap means no further board should be read. */
-  const readBoard = async (board: Board): Promise<boolean> => {
-    const params = assignedToMe(board.peopleColumnIds)
+  /**
+   * Reads every page of one board, or of one of its groups; false when a cap means no further board should be read.
+   * Only the items assigned to the user, unless `everyItem`.
+   */
+  const readBoard = async (board: Board, groupId?: string): Promise<boolean> => {
     let page: ItemsPage
     for (;;) {
       try {
-        page = firstBoardItemsPage(await graphql(accountHost, fields().first, { ids: [board.id], params }))
+        if (groupId !== undefined) {
+          page = firstGroupItemsPage(await graphql(accountHost, fields().group, { ids: [board.id], groupIds: [groupId] }))
+        } else {
+          // No params: monday then returns every item of the board
+          const variables = everyItem ? { ids: [board.id] } : { ids: [board.id], params: assignedToMe(board.peopleColumnIds) }
+          page = firstBoardItemsPage(await graphql(accountHost, fields().first, variables))
+        }
         break
       } catch (err) {
         if (level === FIELD_LEVELS.length - 1) throw err
@@ -546,6 +635,37 @@ export async function readAssignedTasks(
     return true
   }
 
+  const done = (): AssignedTasks => ({ accountHost, user, tasks, warnings, complete, checkedAt: new Date().toISOString() })
+
+  if (everyItem) {
+    const board = boards.length > 0 ? parseBoard(boards[0]) : null
+    if (!board) throw new Error(`Board ${boardIds[0]} not found, or this account cannot read it`)
+    const groups = groupNames.length > 0
+      ? resolveGroups(board.id, await graphql(accountHost, BOARD_GROUPS_QUERY, { ids: [board.id] }), groupNames)
+      : []
+    // Every item brings all its subitems, so the assigned-subitems reads are not needed.
+    try {
+      if (groups.length === 0) {
+        await readBoard(board)
+        return done()
+      }
+      for (const group of groups) {
+        if (Date.now() >= deadline) {
+          incomplete(deadlineWarning)
+          break
+        }
+        if (tasks.length >= maxTasks) {
+          incomplete(taskCapWarning)
+          break
+        }
+        if (!(await readBoard(board, group.id))) break
+      }
+    } catch (err) {
+      incomplete(`Could not read board ${board.id} (${board.name}): ${errorMessage(err)}`)
+    }
+    return done()
+  }
+
   for (const value of boards) {
     const board = parseBoard(value)
     if (!board) {
@@ -577,5 +697,5 @@ export async function readAssignedTasks(
     }
   }
 
-  return { accountHost, user, tasks, warnings, complete, checkedAt: new Date().toISOString() }
+  return done()
 }

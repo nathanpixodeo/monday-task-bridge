@@ -229,7 +229,16 @@ export const ListAssignedTasksBodySchema = z.object({
   boardIds: z.array(z.string().regex(/^\d{1,20}$/)).min(1).max(50).optional(),
   // List the boards to choose from instead of reading tasks.
   boardsOnly: z.boolean().optional(),
-}).refine((body) => !(body.boardsOnly && body.boardIds), { message: 'boardsOnly and boardIds cannot be combined' })
+  // Read every item of the one board in boardIds, whoever it is assigned to.
+  everyItem: z.boolean().optional(),
+  // With everyItem, only these groups, by id or title.
+  groups: z.array(z.string().trim().min(1).max(255)).min(1).max(20).optional(),
+})
+  .refine((body) => !(body.boardsOnly && body.boardIds), { message: 'boardsOnly and boardIds cannot be combined' })
+  .refine((body) => !body.everyItem || (body.boardIds?.length === 1 && !body.boardsOnly), {
+    message: 'everyItem reads exactly one board, named in boardIds',
+  })
+  .refine((body) => !body.groups || body.everyItem === true, { message: 'groups can only be read with everyItem' })
 
 // monday's marketing site and login page share the domain but are not accounts.
 const NON_ACCOUNT_HOSTS = new Set(['www.monday.com', 'auth.monday.com'])

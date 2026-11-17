@@ -2,7 +2,7 @@ import { getConfig, setConfig, defaultConfig, unpairedFields } from './helpers/s
 import type { Config } from './helpers/storage'
 import { ITEM_QUERY, mapItem } from './helpers/monday-api'
 import type { ApiItem, MappedTask } from './helpers/monday-api'
-import { readAssignedTasks } from './helpers/assigned-tasks'
+import { readAssignedTasks, type AssignedTasksOptions } from './helpers/assigned-tasks'
 import { writeBackToItem, WriteBackTargetError } from './helpers/write-back'
 import { performWrite, WriteTargetError } from './helpers/item-writes'
 import { addActivity, cleanAgentName, writeActivity, writeBackActivity } from './helpers/activity'
@@ -102,7 +102,7 @@ async function connectWs() {
           socket.send(JSON.stringify({
             type: 'hello',
             token: c.token,
-            capabilities: ['assignedTasks', 'boardFilter', 'writeBack', 'write', 'updateEdits'],
+            capabilities: ['assignedTasks', 'boardFilter', 'boardItems', 'writeBack', 'write', 'updateEdits'],
             writeEnabled: c.allowWrite
           } satisfies ExtensionToBridgeMessage))
         }
@@ -131,7 +131,8 @@ async function connectWs() {
           })
         } else if (msg.type === 'list-assigned-tasks') {
           if (!authenticated) return
-          listAssignedTasks(msg.requestId, msg.accountHost, msg.cachedHost, msg.boardIds, msg.boardsOnly).catch((err) => {
+          const { boardIds, boardsOnly, everyItem, groups } = msg
+          listAssignedTasks(msg.requestId, msg.accountHost, msg.cachedHost, { boardIds, boardsOnly, everyItem, groups }).catch((err) => {
             reportAssignedTasksError(msg.requestId, err instanceof Error ? err.message : String(err))
           })
         } else if (msg.type === 'write-back') {
@@ -830,8 +831,7 @@ async function listAssignedTasks(
   requestId: string,
   accountHost?: string,
   cachedHost?: string,
-  boardIds?: string[],
-  boardsOnly?: boolean
+  choice: Pick<AssignedTasksOptions, 'boardIds' | 'boardsOnly' | 'everyItem' | 'groups'> = {}
 ) {
   const config = await getConfig()
   if (!config.token) {
@@ -852,7 +852,7 @@ async function listAssignedTasks(
   activeCaptures++
   try {
     await setConfig({ capturing: true })
-    const result = await readAssignedTasks(host, mondayGraphql, { boardIds, boardsOnly })
+    const result = await readAssignedTasks(host, mondayGraphql, choice)
     const res = await fetch('http://127.0.0.1:3457/v1/assigned-tasks', {
       method: 'POST',
       headers: {

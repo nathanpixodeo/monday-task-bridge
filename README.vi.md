@@ -167,7 +167,7 @@ monday-bridge approval manual    # hỏi trước mỗi lần đọc
 monday-bridge approval status    # hiện chế độ của từng CLI
 ```
 
-`auto` áp dụng cho các tool đọc, `monday_add_update` và `monday_edit_update`. Xoá update và các lần ghi lên item (`monday_update_item`, `monday_create_item`, `monday_move_item`) luôn hỏi. Cấu hình do `auto` bản cũ ghi chỉ có tool đọc, và `status` hiện là `partial`: chạy lại `monday-bridge approval auto`. Lệnh này ghi các quy tắc dưới đây, và `manual` gỡ chúng đi:
+`auto` áp dụng cho các tool đọc, `monday_add_update` và `monday_edit_update`. Liệt kê mọi item của một board (`monday_list_board_items`), xoá update và các lần ghi lên item (`monday_update_item`, `monday_create_item`, `monday_move_item`) luôn hỏi. Cấu hình do `auto` bản cũ ghi chỉ có tool đọc, và `status` hiện là `partial`: chạy lại `monday-bridge approval auto`. Lệnh này ghi các quy tắc dưới đây, và `manual` gỡ chúng đi:
 
 | CLI | Tệp | Quy tắc cho mỗi tool mà `auto` áp dụng |
 | --- | --- | --- |
@@ -177,7 +177,7 @@ monday-bridge approval status    # hiện chế độ của từng CLI
 
 `MONDAY_BRIDGE_CLIENTS` giới hạn các CLI mà lệnh này thay đổi. Với một profile Claude Code khác, hãy đặt `CLAUDE_CONFIG_DIR` trước, giống như với trình cài đặt.
 
-Các tool đọc còn được đánh dấu chỉ đọc (`readOnlyHint`). Ở plan mode, Claude Code hỏi trước mọi MCP tool không được đánh dấu chỉ đọc, kể cả khi đã có quy tắc cho phép. Nhờ dấu này, các lần đọc monday cũng chạy không cần hỏi ở plan mode.
+Các tool đọc còn được đánh dấu chỉ đọc (`readOnlyHint`). Ở plan mode, Claude Code hỏi trước mọi MCP tool không được đánh dấu chỉ đọc, kể cả khi đã có quy tắc cho phép. Nhờ dấu này, các lần đọc monday cũng chạy không cần hỏi ở plan mode. `monday_list_board_items` là tool đọc duy nhất không có dấu này và không có quy tắc: tool này đọc task giao cho người khác, nên mọi agent CLI luôn hỏi bạn trước mỗi lần gọi, ở mọi chế độ.
 
 ## Agent của bạn làm được gì
 
@@ -187,6 +187,7 @@ Các tool đọc còn được đánh dấu chỉ đọc (`readOnlyHint`). Ở p
 | `monday_read_open_task` | Đọc mới task đang mở trong tab Chrome đang hoạt động, hoặc trong tab task đầu tiên đang mở. |
 | `monday_list_assigned_tasks` | Danh sách trực tiếp (live) các task được giao cho bạn (ở bất kỳ cột người nào), kèm board, link và các cột. Tham số tùy chọn `boardIds` giới hạn việc đọc ở những board đó. Tool kiểm tra tối đa 100 board đang hoạt động và 5000 task (item và subitem) trong vòng 160 giây. Khi một giới hạn hoặc một board không đọc được làm danh sách bị cắt bớt, `complete` là false và `warnings` cho biết lý do. Kết quả không được cache. |
 | `monday_list_boards` | Các board đang hoạt động mà bạn có thể được giao task, kèm workspace của chúng, để dùng làm `boardIds` ở trên. |
+| `monday_list_board_items` | Mọi item của một board (`boardId`), dù giao cho ai, mỗi item kèm tất cả subitem, group và các cột của nó. Tuỳ chọn `groups` chỉ đọc các group đó, theo tên (không phân biệt hoa thường) hoặc id; group không tồn tại sẽ báo lỗi kèm tên các group của board. Giới hạn như trên. Agent CLI luôn hỏi bạn trước, vì danh sách có task của người khác. Sau đó `monday_read_task` đọc đầy đủ bất kỳ item nào trong đó. |
 | `monday_get_image` | Các byte gốc PNG, JPEG, GIF hoặc WebP của một tệp đính kèm có trạng thái `ready`. |
 | `monday_get_task` | Snapshot mới nhất trong cache, có thể lọc theo `boardId` và/hoặc `itemId`. |
 | `monday_list_tasks` | Tóm tắt các snapshot trong cache. |

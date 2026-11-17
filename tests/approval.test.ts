@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  ALWAYS_ASK_READ_TOOLS,
   AUTO_TOOLS,
   READ_TOOLS,
   agyRules,
@@ -13,11 +14,14 @@ import {
 } from '../bridge/approval.js'
 
 test('auto rules cover the reads and adding or editing an update, never deleting one or an item write', () => {
-  for (const tool of ['monday_write_back', 'monday_delete_update', 'monday_update_item', 'monday_create_item', 'monday_move_item']) {
+  for (const tool of ['monday_write_back', 'monday_delete_update', 'monday_update_item', 'monday_create_item', 'monday_move_item', ...ALWAYS_ASK_READ_TOOLS]) {
     assert.ok(!(AUTO_TOOLS as readonly string[]).includes(tool), tool)
     assert.ok(claudeRules.every((rule) => !rule.endsWith(`__${tool}`)), tool)
     assert.ok(agyRules.every((rule) => !rule.endsWith(`/${tool})`)), tool)
+    assert.ok(!applyCodexRules('[mcp_servers.monday-task-bridge]\n', 'auto').includes(`.tools.${tool}]`), tool)
   }
+  // Listing a whole board reads other people's tasks: the user confirms each call
+  assert.deepEqual([...ALWAYS_ASK_READ_TOOLS], ['monday_list_board_items'])
   for (const tool of ['monday_add_update', 'monday_edit_update']) {
     assert.ok(!(READ_TOOLS as readonly string[]).includes(tool), tool)
     assert.ok(claudeRules.includes(`mcp__monday-task-bridge__${tool}`), tool)

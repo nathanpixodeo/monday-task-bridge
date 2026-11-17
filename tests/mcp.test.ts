@@ -101,6 +101,8 @@ test('MCP always lists the agent writes, and monday_write_back only with MONDAY_
   try {
     const reading = await toolsWith({})
     assert.ok(reading.includes('monday_list_boards'))
+    // Always listed, never read-only (checked above), so the CLI asks before each call
+    assert.ok(reading.includes('monday_list_board_items'))
     assert.ok(!reading.includes('monday_write_back'))
     // The agent writes are always listed: the popup's "Allow writing" switch decides, at call time
     for (const tool of ['monday_add_update', 'monday_update_item', 'monday_create_item', 'monday_move_item', 'monday_edit_update', 'monday_delete_update']) {

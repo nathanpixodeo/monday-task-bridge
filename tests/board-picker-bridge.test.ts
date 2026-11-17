@@ -91,6 +91,12 @@ test('the board picker lists boards and reads one board through an extension tha
     delete tasks.boards
     assert.equal((await send('/v1/assigned-tasks', { requestId: boardCommand.requestId, result: tasks }, extensionHeaders)).status, 200)
     assert.equal((await boardRead).status, 200)
+
+    // An extension without boardItems would answer with the assigned tasks only: it is told to update instead
+    assert.equal(health.boardItemsSupported, false)
+    const everyItem = await send('/v1/list-assigned-tasks', { boardIds: ['123'], everyItem: true }, adminHeaders)
+    assert.equal(everyItem.status, 502)
+    assert.match((await everyItem.json() as { error: string }).error, /^EXTENSION_UPDATE_REQUIRED: .*every item of a board/)
   } finally {
     ws?.close()
     await closeServer(server)

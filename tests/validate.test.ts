@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AssignedTaskSchema, AssignedTasksPayloadSchema, resolveTaskUrl } from '../bridge/validate.js'
+import { AssignedTaskSchema, AssignedTasksPayloadSchema, ListAssignedTasksBodySchema, resolveTaskUrl } from '../bridge/validate.js'
 import { MAX_TASKS } from '../extension/helpers/assigned-tasks.js'
 
 test('resolveTaskUrl accepts a full task url including a views segment', () => {
@@ -64,4 +64,18 @@ test('an assigned task keeps its group and typed columns, and only #rrggbb colou
   assert.deepEqual(AssignedTaskSchema.parse(base), base)
   assert.equal(AssignedTaskSchema.safeParse({ ...rich, group: { ...rich.group, color: 'red' } }).success, false)
   assert.equal(AssignedTaskSchema.safeParse({ ...rich, columns: [{ ...rich.columns[0], id: '../x' }] }).success, false)
+})
+
+test('a board listing of every item names exactly one board, and groups only go with it', () => {
+  const ok = (body: unknown) => ListAssignedTasksBodySchema.safeParse(body).success
+  assert.equal(ok({ boardIds: ['20'], everyItem: true }), true)
+  assert.equal(ok({ boardIds: ['20'], everyItem: true, groups: ['SUPERLEADER', 'topics'] }), true)
+  assert.deepEqual(ListAssignedTasksBodySchema.parse({ boardIds: ['20'], everyItem: true, groups: [' SUPERLEADER '] }).groups, ['SUPERLEADER'])
+  assert.equal(ok({ everyItem: true }), false)
+  assert.equal(ok({ boardIds: ['20', '21'], everyItem: true }), false)
+  assert.equal(ok({ boardsOnly: true, everyItem: true }), false)
+  assert.equal(ok({ boardIds: ['20'], groups: ['SUPERLEADER'] }), false)
+  assert.equal(ok({ boardIds: ['20'], everyItem: true, groups: [] }), false)
+  assert.equal(ok({ boardIds: ['20'], everyItem: true, groups: ['  '] }), false)
+  assert.equal(ok({ boardIds: ['20'], everyItem: true, groups: Array.from({ length: 21 }, (_, index) => `g${index}`) }), false)
 })

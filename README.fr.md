@@ -167,7 +167,7 @@ monday-bridge approval manual    # demander avant chaque lecture
 monday-bridge approval status    # afficher le mode de chaque CLI
 ```
 
-`auto` couvre les outils de lecture, `monday_add_update` et `monday_edit_update`. Supprimer une mise à jour et les écritures sur les éléments (`monday_update_item`, `monday_create_item`, `monday_move_item`) demandent toujours une confirmation. Des réglages écrits par un ancien `auto` ne couvrent que la lecture, et `status` les affiche comme `partial` : relancez `monday-bridge approval auto`. La commande écrit les règles suivantes, et `manual` les retire :
+`auto` couvre les outils de lecture, `monday_add_update` et `monday_edit_update`. Lister tous les éléments d'un tableau (`monday_list_board_items`), supprimer une mise à jour et les écritures sur les éléments (`monday_update_item`, `monday_create_item`, `monday_move_item`) demandent toujours une confirmation. Des réglages écrits par un ancien `auto` ne couvrent que la lecture, et `status` les affiche comme `partial` : relancez `monday-bridge approval auto`. La commande écrit les règles suivantes, et `manual` les retire :
 
 | CLI | Fichier | Règle pour chaque outil couvert par `auto` |
 | --- | --- | --- |
@@ -177,7 +177,7 @@ monday-bridge approval status    # afficher le mode de chaque CLI
 
 `MONDAY_BRIDGE_CLIENTS` limite les CLI que la commande modifie. Pour un autre profil Claude Code, définissez d'abord `CLAUDE_CONFIG_DIR`, comme pour l'installeur.
 
-Les outils de lecture sont aussi marqués en lecture seule (`readOnlyHint`). En mode plan, Claude Code demande une confirmation avant tout outil MCP qui n'est pas marqué en lecture seule, même si une règle d'autorisation le couvre. Grâce à cette marque, les lectures monday s'exécutent aussi sans confirmation en mode plan.
+Les outils de lecture sont aussi marqués en lecture seule (`readOnlyHint`). En mode plan, Claude Code demande une confirmation avant tout outil MCP qui n'est pas marqué en lecture seule, même si une règle d'autorisation le couvre. Grâce à cette marque, les lectures monday s'exécutent aussi sans confirmation en mode plan. `monday_list_board_items` est la seule lecture sans cette marque et sans règle : elle lit des tâches assignées à d'autres personnes, donc chaque CLI d'agent vous demande une confirmation avant chaque appel, dans tous les modes.
 
 ## Ce que votre agent peut faire
 
@@ -187,6 +187,7 @@ Les outils de lecture sont aussi marqués en lecture seule (`readOnlyHint`). En 
 | `monday_read_open_task` | Une lecture en direct de la tâche ouverte dans votre onglet Chrome actif, ou dans le premier onglet de tâche ouvert. |
 | `monday_list_assigned_tasks` | Une liste en direct des tâches qui vous sont assignées (dans n'importe quelle colonne Personnes), avec le tableau, le lien et les colonnes. Le paramètre optionnel `boardIds` limite la lecture à ces tableaux. L'outil parcourt jusqu'à 100 tableaux actifs et 5000 tâches (éléments et sous-éléments, ou items et subitems) en 160 secondes au maximum. Quand une limite ou un tableau illisible a tronqué la liste, `complete` vaut false et `warnings` en donne la raison. Résultat non mis en cache. |
 | `monday_list_boards` | Les tableaux actifs sur lesquels vous pouvez être assigné, avec leur espace de travail, à utiliser comme `boardIds` ci-dessus. |
+| `monday_list_board_items` | Tous les éléments d'un tableau (`boardId`), quelle que soit la personne assignée, chacun avec tous ses sous-éléments, son groupe et ses colonnes. L'option `groups` ne lit que ces groupes, par titre (sans tenir compte de la casse) ou par id ; un groupe qui n'existe pas échoue en donnant les noms des groupes du tableau. Mêmes limites que ci-dessus. La CLI d'agent vous demande toujours une confirmation d'abord, car la liste contient les tâches d'autres personnes. Ensuite, `monday_read_task` lit n'importe laquelle en entier. |
 | `monday_get_image` | Les octets originaux PNG, JPEG, GIF ou WebP d'une pièce jointe dont le statut est `ready`. |
 | `monday_get_task` | Le dernier instantané en cache, éventuellement filtré par `boardId` et/ou `itemId`. |
 | `monday_list_tasks` | Les résumés des instantanés en cache. |

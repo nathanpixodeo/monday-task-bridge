@@ -3,8 +3,8 @@
  * update tools, without asking.
  *
  * Each function takes a CLI's config text and returns it with the rules added (`auto`) or removed (`manual`).
- * Only AUTO_TOOLS get a rule: monday_delete_update, monday_update_item, monday_create_item, monday_move_item and
- * monday_write_back always ask.
+ * Only AUTO_TOOLS get a rule: monday_list_board_items, monday_delete_update, monday_update_item, monday_create_item,
+ * monday_move_item and monday_write_back always ask.
  */
 
 export type ApprovalMode = 'auto' | 'manual'
@@ -22,6 +22,12 @@ export const READ_TOOLS = [
   'monday_list_tasks',
   'monday_bridge_status',
 ] as const
+
+/**
+ * A read that always asks, even in `auto` mode: it lists tasks assigned to other people, so the user confirms each call.
+ * It is not marked read-only either (mcp.ts), so plan mode and Codex ask too.
+ */
+export const ALWAYS_ASK_READ_TOOLS = ['monday_list_board_items'] as const
 
 /** Writes that run without asking in `auto` mode: adding an update and editing one. Deleting always asks. */
 export const AUTO_WRITE_TOOLS = ['monday_add_update', 'monday_edit_update'] as const

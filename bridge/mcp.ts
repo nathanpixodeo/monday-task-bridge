@@ -6,6 +6,7 @@
  *   monday_read_task        – capture any task by URL or board+item ID
  *   monday_list_assigned_tasks – list tasks assigned to the signed-in user (live, not stored)
  *   monday_list_boards      – list the boards the user can be assigned on, to read one at a time
+ *   monday_list_board_items – list every item of one board or of some of its groups (agent CLIs always ask)
  *   monday_add_update       – add an update to an item, or reply to one of its updates
  *   monday_update_item      – set column values: status, tags, people, dates, text, numbers, ...
  *   monday_create_item      – create an item on a board, or a subitem under an item
@@ -234,7 +235,8 @@ mcp.tool(
 mcp.tool(
   'monday_list_boards',
   'List the active boards where the signed-in monday user can be assigned (boards with a people column), with each ' +
-    "board's workspace, to read one at a time with monday_list_assigned_tasks boardIds. No item is read. " +
+    "board's workspace, to read one at a time with monday_list_assigned_tasks boardIds, or in full with " +
+    'monday_list_board_items. No item is read. ' +
     'Requires Chrome running with the extension connected (power on).',
   {
     accountHost: z.string().optional().describe('e.g. team.monday.com; defaults to the host of an open monday tab, then of the latest cached task'),
@@ -242,6 +244,29 @@ mcp.tool(
   READ_ONLY,
   async ({ accountHost }) =>
     captureVia('/v1/list-assigned-tasks', { accountHost, boardsOnly: true }, 'Failed to list boards')
+)
+
+// -- monday_list_board_items ------------------------------------------------
+
+// Not marked read-only, and never given an approval rule (approval.ts): it reads tasks assigned to other people, so
+// the user confirms each call. With readOnlyHint, Codex and Claude Code's plan mode would run it without asking.
+mcp.tool(
+  'monday_list_board_items',
+  'List every item on one monday board, or only in the named groups, whoever it is assigned to, each with all its ' +
+    'subitems (parentItemId/parentBoardId name the parent), its group and its columns. ' +
+    'Agent CLIs always ask the user before running this tool, because it reads tasks assigned to other people: ' +
+    "for the user's own tasks, use monday_list_assigned_tasks. Read one item in full (updates, files) with " +
+    'monday_read_task. A group that does not exist fails with the names of the board\'s groups. ' +
+    'Check `complete` and `warnings`: caps (5000 tasks, 160s) make the list partial. ' +
+    'Requires Chrome running with the extension connected (power on). Waits up to 180s.',
+  {
+    accountHost: z.string().optional().describe('e.g. team.monday.com; defaults to the host of an open monday tab, then of the latest cached task'),
+    boardId: z.string().describe('The board to read, from a task link (/boards/<id>/...) or monday_list_boards'),
+    groups: z.array(z.string()).optional()
+      .describe('Read only these groups, each by its title (case does not matter) or id; the whole board without it'),
+  },
+  async ({ accountHost, boardId, groups }) =>
+    captureVia('/v1/list-assigned-tasks', { accountHost, boardIds: [boardId], everyItem: true, groups }, 'Failed to list board items')
 )
 
 // -- Agent writes -----------------------------------------------------------

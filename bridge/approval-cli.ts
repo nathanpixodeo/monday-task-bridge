@@ -8,7 +8,7 @@
  *   manual  Removes those rules, so each CLI asks again (its default).
  *   status  Shows the mode of each CLI.
  *
- * Deleting an update, and every item write, always asks. MONDAY_BRIDGE_CLIENTS limits the CLIs it changes,
+ * Listing every item of a board, deleting an update, and every item write always ask. MONDAY_BRIDGE_CLIENTS limits the CLIs it changes,
  * as in the installer. Claude Code uses the profile in CLAUDE_CONFIG_DIR, Codex the folder in CODEX_HOME.
  */
 
@@ -64,7 +64,7 @@ async function main(): Promise<void> {
   if (command !== 'auto' && command !== 'manual' && command !== 'status') {
     process.stderr.write('Usage: approval-cli auto|manual|status\n')
     process.stderr.write('  auto    Agent CLIs read monday tasks, and add or edit updates, without asking each time.\n')
-    process.stderr.write('          Deleting an update and item writes still ask.\n')
+    process.stderr.write('          Listing a whole board, deleting an update and item writes still ask.\n')
     process.stderr.write('  manual  Agent CLIs ask before each read and each write (their default).\n')
     process.stderr.write('  status  Show the mode of each agent CLI.\n')
     process.exit(1)

@@ -529,3 +529,89 @@ test('a subitems read that fails leaves the board read as it was, with a warning
   assert.equal(result.complete, false)
   assert.ok(result.warnings.some((warning) => warning.includes('subitems assigned to you on board 20') && warning.includes('complexity budget')))
 })
+
+test('everyItem reads every item of the chosen board, whoever it is assigned to, with all its subitems', async () => {
+  const { graphql, calls } = fakeGraphql((call) => {
+    // No people column: everyItem still reads the board
+    if (named(call, 'GetChosenBoards')) return { me: { id: '1', name: 'Ada' }, boards: [board('20', [{ id: 'status', type: 'status' }])] }
+    if (named(call, 'GetBoardAssignedItems')) {
+      return itemsPage('c1', [{ ...item('201', 'Not mine'), subitems: [subitem('901', 'Theirs'), subitem('902', 'Also theirs')] }])
+    }
+    if (named(call, 'GetNextAssignedItems')) return { next_items_page: { cursor: null, items: [item('202', 'Mine')] } }
+    throw new Error(`unexpected query ${call.query}`)
+  })
+
+  const result = await readAssignedTasks('corp.monday.com', graphql, { boardIds: ['20'], everyItem: true })
+
+  assert.deepEqual(result.tasks.map((task) => [task.boardId, task.itemId, task.parentItemId ?? null]), [
+    ['20', '201', null],
+    ['900', '901', '201'],
+    ['900', '902', '201'],
+    ['20', '202', null]
+  ])
+  // No assigned_to_me rule, and none of the assigned-subitems reads
+  assert.deepEqual(calls.find((call) => named(call, 'GetBoardAssignedItems'))?.variables, { ids: ['20'] })
+  assert.ok(!calls.some((call) => named(call, 'GetSubitemBoards') || named(call, 'GetAssignedSubitems')))
+  assert.equal(result.complete, true)
+})
+
+test('everyItem with groups reads only those groups, named by title or id, and pages through each', async () => {
+  const { graphql, calls } = fakeGraphql((call) => {
+    if (named(call, 'GetChosenBoards')) return { me: { id: '1', name: 'Ada' }, boards: [board('20', people)] }
+    if (named(call, 'GetBoardGroups')) {
+      return { boards: [{ id: '20', groups: [{ id: 'topics', title: 'This week' }, { id: 'new_group1', title: 'SUPERLEADER' }] }] }
+    }
+    if (named(call, 'GetGroupItems')) {
+      const [groupId] = call.variables.groupIds as string[]
+      const items = groupId === 'new_group1'
+        ? [{ ...item('301', 'Lead'), group: { id: 'new_group1', title: 'SUPERLEADER', color: '#FF5AC4' }, subitems: [subitem('951', 'Step')] }]
+        : [item('302', 'Week')]
+      return { boards: [{ groups: [{ items_page: { cursor: groupId === 'new_group1' ? 'g1' : null, items } }] }] }
+    }
+    if (named(call, 'GetNextAssignedItems')) return { next_items_page: { cursor: null, items: [item('303', 'Lead 2')] } }
+    throw new Error(`unexpected query ${call.query}`)
+  })
+
+  const result = await readAssignedTasks('corp.monday.com', graphql, {
+    boardIds: ['20'], everyItem: true, groups: [' superleader ', 'topics', 'SUPERLEADER']
+  })
+
+  assert.deepEqual(result.tasks.map((task) => task.itemId), ['301', '951', '303', '302'])
+  // The subitem is drawn in its parent's group
+  assert.deepEqual(result.tasks[1]?.group, { id: 'new_group1', title: 'SUPERLEADER', color: '#ff5ac4' })
+  // Each group once, in the order named
+  assert.deepEqual(
+    calls.filter((call) => named(call, 'GetGroupItems')).map((call) => call.variables),
+    [{ ids: ['20'], groupIds: ['new_group1'] }, { ids: ['20'], groupIds: ['topics'] }]
+  )
+  assert.ok(!calls.some((call) => named(call, 'GetBoardAssignedItems')))
+  assert.equal(result.complete, true)
+})
+
+test('everyItem rejects a group the board does not have, naming its groups, and a board it cannot read', async () => {
+  const { graphql, calls } = fakeGraphql((call) => {
+    if (named(call, 'GetChosenBoards')) {
+      const [id] = call.variables.ids as string[]
+      return { me: { id: '1', name: 'Ada' }, boards: id === '20' ? [board('20', people)] : [] }
+    }
+    if (named(call, 'GetBoardGroups')) return { boards: [{ id: '20', groups: [{ id: 'topics', title: 'This week' }, { id: 'g2', title: 'Done' }] }] }
+    throw new Error(`unexpected query ${call.query}`)
+  })
+
+  await assert.rejects(
+    readAssignedTasks('corp.monday.com', graphql, { boardIds: ['20'], everyItem: true, groups: ['Leaders'] }),
+    /Group "Leaders" not found on board 20; its groups: This week, Done/
+  )
+  await assert.rejects(readAssignedTasks('corp.monday.com', graphql, { boardIds: ['21'], everyItem: true }), /Board 21 not found/)
+  assert.ok(!calls.some((call) => named(call, 'GetGroupItems')))
+})
+
+test('everyItem needs exactly one chosen board, and groups need everyItem', async () => {
+  const { graphql, calls } = fakeGraphql(() => ({}))
+
+  await assert.rejects(readAssignedTasks('corp.monday.com', graphql, { everyItem: true }), /exactly one board/)
+  await assert.rejects(readAssignedTasks('corp.monday.com', graphql, { everyItem: true, boardIds: ['1', '2'] }), /exactly one board/)
+  await assert.rejects(readAssignedTasks('corp.monday.com', graphql, { boardIds: ['1'], groups: ['topics'] }), /only be read with everyItem/)
+  await assert.rejects(readAssignedTasks('corp.monday.com', graphql, { boardIds: ['1'], everyItem: true, groups: [' '] }), /group ids or titles/)
+  assert.equal(calls.length, 0)
+})

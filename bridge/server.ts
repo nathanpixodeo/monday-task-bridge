@@ -382,7 +382,7 @@ export function rejectCapture(requestId: string, errorMsg: string): boolean {
 export async function requestAssignedTasks(
   accountHost?: string,
   cachedHost?: string,
-  choice: { boardIds?: string[]; boardsOnly?: boolean } = {}
+  choice: { boardIds?: string[]; boardsOnly?: boolean; everyItem?: boolean; groups?: string[] } = {}
 ): Promise<AssignedTasks> {
   await waitForExtension()
   const target = liveTarget()
@@ -393,10 +393,22 @@ export async function requestAssignedTasks(
   if (choosing && target && !target.capabilities?.includes('boardFilter')) {
     return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to choose a board'))
   }
+  // An older extension would ignore everyItem and answer with the assigned tasks only
+  if (choice.everyItem && target && !target.capabilities?.includes('boardItems')) {
+    return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to list every item of a board'))
+  }
 
   // JSON.stringify drops the keys left undefined
-  return requestFromExtension(pendingAssignedTasks, (requestId) =>
-    ({ type: 'list-assigned-tasks', requestId, accountHost, cachedHost, boardIds: choice.boardIds, boardsOnly: choice.boardsOnly }))
+  return requestFromExtension(pendingAssignedTasks, (requestId) => ({
+    type: 'list-assigned-tasks',
+    requestId,
+    accountHost,
+    cachedHost,
+    boardIds: choice.boardIds,
+    boardsOnly: choice.boardsOnly,
+    everyItem: choice.everyItem,
+    groups: choice.groups,
+  }))
 }
 
 export function resolveAssignedTasks(requestId: string, result: AssignedTasks): boolean {
@@ -482,6 +494,7 @@ async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse
   let extensionConnected = false
   let assignedTasksSupported = false
   let boardFilterSupported = false
+  let boardItemsSupported = false
   let writeBackSupported = false
   let writeSupported = false
   let writeEnabled = false
@@ -493,6 +506,9 @@ async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse
       }
       if (ls.capabilities?.includes('boardFilter')) {
         boardFilterSupported = true
+      }
+      if (ls.capabilities?.includes('boardItems')) {
+        boardItemsSupported = true
       }
       if (ls.capabilities?.includes('writeBack')) {
         writeBackSupported = true
@@ -510,6 +526,7 @@ async function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse
     extensionConnected,
     assignedTasksSupported,
     boardFilterSupported,
+    boardItemsSupported,
     writeBackSupported,
     writeSupported,
     writeEnabled,
@@ -795,8 +812,8 @@ async function handleListAssignedTasks(req: http.IncomingMessage, res: http.Serv
   const cachedHost = latestHost && isMondayHost(latestHost) ? latestHost : undefined
 
   try {
-    const { accountHost, boardIds, boardsOnly } = parsed.data
-    json(res, 200, await requestAssignedTasks(accountHost, cachedHost, { boardIds, boardsOnly }))
+    const { accountHost, boardIds, boardsOnly, everyItem, groups } = parsed.data
+    json(res, 200, await requestAssignedTasks(accountHost, cachedHost, { boardIds, boardsOnly, everyItem, groups }))
   } catch (err: unknown) {
     if (err instanceof InvalidTargetError) {
       json(res, 400, { error: err.message })
