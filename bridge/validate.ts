@@ -159,6 +159,7 @@ export const TaskAttachmentSchema = z.object({
   mimeType: z.string().max(128),
   status: z.enum(['ready', 'unavailable']),
   error: z.string().max(1024).optional(),
+  updateId: z.string().max(256).optional(),
 })
 
 export const TaskSnapshotSchema = z.object({

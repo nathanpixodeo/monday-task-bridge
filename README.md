@@ -191,7 +191,7 @@ The read tools are also marked read-only (`readOnlyHint`). In plan mode, Claude 
 | `monday_list_tasks` | Summaries of the cached snapshots. |
 | `monday_bridge_status` | Bridge health, pairing, and extension connection state. |
 
-A typical agent flow is: call `monday_read_task` with the task link, read `complete` and `warnings`, then call `monday_get_image` for each attachment it needs to see.
+A typical agent flow is: call `monday_read_task` with the task link, read `complete` and `warnings`, then call `monday_get_image` for each attachment it needs to see. `attachments` holds the images on the item, on its updates, and on their replies. Each image on an update or a reply names it in `updateId`. One read takes at most 50 images, those on the newest updates first.
 
 ### Writing to monday
 
@@ -235,7 +235,7 @@ The **Allow writing** switch, under the power button, lets agents edit monday; s
 1. When an agent session opens, its MCP server (started by the agent CLI) starts the bridge in the background if it is not running, and checks every 15 seconds that it still is. The extension connects to the bridge within 30 seconds, or at once when you open the popup. A bridge that has just started holds an agent's request for up to 40 seconds while the extension connects. To start the bridge only at the first tool call, set `MONDAY_BRIDGE_AUTOSTART=0` in the MCP server's environment.
 2. An agent calls an MCP tool, and the MCP server passes the request to the bridge.
 3. The bridge sends the request to the paired extension over a local WebSocket.
-4. The extension calls **monday's own web API** (`https://<account>.monday.com/v2`, GraphQL): the same endpoint monday's web app uses, with your browser session and the app's CSRF token. One request returns the task name, every column as text, the updates with replies and authors, and the attached files. No tab opens.
+4. The extension calls **monday's own web API** (`https://<account>.monday.com/v2`, GraphQL): the same endpoint monday's web app uses, with your browser session and the app's CSRF token. One request returns the task name, every column as text, the updates with replies and authors, and the files attached to the item, its updates and their replies. No tab opens.
 5. Original images are downloaded from monday's file storage and checked byte by byte. Files that are not images are listed in an `Other files` field.
 6. The snapshot goes back to the bridge, which caches it and returns it to the agent.
 

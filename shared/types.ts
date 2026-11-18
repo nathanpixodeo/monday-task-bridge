@@ -15,6 +15,8 @@ export interface TaskAttachment {
   mimeType: string
   status: 'ready' | 'unavailable'
   error?: string
+  /** The update or reply the image is on; absent for a file on the item only. */
+  updateId?: string
 }
 
 export interface TaskSnapshot {

@@ -687,9 +687,12 @@ async function performCapture(requestId?: string, sourceUrl?: string, agent: str
     for (const raw of rawAttachments) {
       // IDs must be unique across captures: the store uses them to locate original bytes.
       const attachmentId = crypto.randomUUID()
+      // The update or reply the image is on, so an agent can tell which one it belongs to
+      const onUpdate = raw.updateId ? { updateId: raw.updateId } : {}
       if (!raw.url) {
         attachments.push({
           id: attachmentId,
+          ...onUpdate,
           name: raw.name,
           mimeType: raw.mimeType || 'application/octet-stream',
           status: 'unavailable',
@@ -714,6 +717,7 @@ async function performCapture(requestId?: string, sourceUrl?: string, agent: str
 
           attachments.push({
             id: attachmentId,
+            ...onUpdate,
             name: raw.name,
             mimeType: raw.mimeType || 'application/octet-stream',
             status: 'unavailable',
@@ -753,6 +757,7 @@ async function performCapture(requestId?: string, sourceUrl?: string, agent: str
 
         attachments.push({
           id: attachmentId,
+          ...onUpdate,
           name: raw.name,
           mimeType: contentType,
           status: 'ready'
@@ -767,6 +772,7 @@ async function performCapture(requestId?: string, sourceUrl?: string, agent: str
       } catch (e) {
         attachments.push({
           id: attachmentId,
+          ...onUpdate,
           name: raw.name,
           mimeType: raw.mimeType || 'application/octet-stream',
           status: 'unavailable',
@@ -1029,6 +1035,7 @@ interface ExtractResult {
     name: string
     mimeType: string
     url: string
+    updateId?: string
   }>
   warnings: string[]
 }

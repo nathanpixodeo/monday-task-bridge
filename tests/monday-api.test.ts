@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mapItem, OTHER_FILES_FIELD, UPDATE_LIMIT } from '../extension/helpers/monday-api.js'
+import { mapItem, MAX_IMAGES, OTHER_FILES_FIELD, UPDATE_LIMIT } from '../extension/helpers/monday-api.js'
 
 test('mapItem turns a GraphQL item into snapshot fields, updates and image attachments', () => {
   const task = mapItem({
@@ -35,8 +35,45 @@ test('mapItem turns a GraphQL item into snapshot fields, updates and image attac
     id: '1', author: 'Claire', createdAt: '2026-10-08T09:00:00Z', body: 'Please check the score layout.',
     replies: [{ id: '2', author: 'Nathan', createdAt: '2026-10-08T10:00:00Z', body: 'Done' }]
   }])
-  assert.deepEqual(task.attachments, [{ id: '10', name: 'score.png', mimeType: 'image/png', url: 'https://files.example/score.png' }])
+  // Found on update 1 first, so it names that update
+  assert.deepEqual(task.attachments, [{ id: '10', name: 'score.png', mimeType: 'image/png', url: 'https://files.example/score.png', updateId: '1' }])
   assert.deepEqual(task.warnings, [])
+})
+
+test('mapItem reads the images in replies, each naming the reply it is on', () => {
+  const task = mapItem({
+    id: 1,
+    name: 'Settings',
+    updates: [
+      {
+        id: 5,
+        text_body: 'Questions',
+        replies: [
+          { id: 6, text_body: 'See the screen', creator: { name: 'Clement' }, assets: [{ id: 20, name: 'screen.jpg', file_extension: 'jpg', public_url: 'https://files.example/screen.jpg' }] },
+          { id: 7, text_body: 'Notes', assets: [{ id: 21, name: 'notes.docx', file_extension: 'docx', public_url: 'https://files.example/notes.docx' }] }
+        ]
+      }
+    ],
+    assets: [{ id: 30, name: 'brief.png', file_extension: 'png', url: 'https://team.monday.com/protected_static/brief.png' }]
+  })
+  assert.deepEqual(task.attachments, [
+    { id: '20', name: 'screen.jpg', mimeType: 'image/jpeg', url: 'https://files.example/screen.jpg', updateId: '6' },
+    // A file on the item only names no update
+    { id: '30', name: 'brief.png', mimeType: 'image/png', url: 'https://team.monday.com/protected_static/brief.png' }
+  ])
+  assert.equal(task.fields[OTHER_FILES_FIELD], 'notes.docx')
+  assert.deepEqual(task.warnings, [])
+})
+
+test('mapItem keeps the images on the newest updates when a task has too many', () => {
+  const updates = Array.from({ length: MAX_IMAGES + 1 }, (_, i) => ({
+    id: i, text_body: `u${i}`, assets: [{ id: 100 + i, name: `shot${i}.png`, file_extension: 'png', public_url: `https://files.example/${i}.png` }]
+  }))
+  const task = mapItem({ id: 1, name: 'Busy task', updates })
+  assert.equal(task.attachments.length, MAX_IMAGES)
+  assert.equal(task.attachments[0].updateId, '0')
+  assert.equal(task.attachments.at(-1)!.updateId, String(MAX_IMAGES - 1))
+  assert.deepEqual(task.warnings, [`Only ${MAX_IMAGES} of ${MAX_IMAGES + 1} images were read, those on the newest updates first`])
 })
 
 test('mapItem warns when the update limit may have cut older updates', () => {

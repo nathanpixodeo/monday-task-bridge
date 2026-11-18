@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AssignedTaskSchema, AssignedTasksPayloadSchema, ListAssignedTasksBodySchema, resolveTaskUrl } from '../bridge/validate.js'
+import { AssignedTaskSchema, AssignedTasksPayloadSchema, CapturePayloadSchema, ListAssignedTasksBodySchema, resolveTaskUrl } from '../bridge/validate.js'
 import { MAX_TASKS } from '../extension/helpers/assigned-tasks.js'
 
 test('resolveTaskUrl accepts a full task url including a views segment', () => {
@@ -78,4 +78,17 @@ test('a board listing of every item names exactly one board, and groups only go 
   assert.equal(ok({ boardIds: ['20'], everyItem: true, groups: [] }), false)
   assert.equal(ok({ boardIds: ['20'], everyItem: true, groups: ['  '] }), false)
   assert.equal(ok({ boardIds: ['20'], everyItem: true, groups: Array.from({ length: 21 }, (_, index) => `g${index}`) }), false)
+})
+
+test('CapturePayloadSchema keeps the update or reply an image is on', () => {
+  const parsed = CapturePayloadSchema.parse({
+    snapshot: {
+      sourceUrl: 'https://team.monday.com/boards/1/pulses/2', accountHost: 'team.monday.com', boardId: '1', itemId: '2',
+      title: 'Task', fields: {}, updates: [],
+      attachments: [{ id: 'img-1', name: 'screen.png', mimeType: 'image/png', status: 'unavailable', error: 'HTTP 404', updateId: '6' }],
+      capturedAt: '2026-11-18T00:00:00Z', captureReason: 'mcp', complete: false, warnings: []
+    },
+    images: []
+  })
+  assert.equal(parsed.snapshot.attachments[0].updateId, '6')
 })

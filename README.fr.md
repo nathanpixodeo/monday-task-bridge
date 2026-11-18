@@ -193,7 +193,7 @@ Les outils de lecture sont aussi marqués en lecture seule (`readOnlyHint`). En 
 | `monday_list_tasks` | Les résumés des instantanés en cache. |
 | `monday_bridge_status` | L'état de santé du bridge, l'appairage et l'état de connexion de l'extension. |
 
-Un déroulé typique pour un agent : appeler `monday_read_task` avec le lien de la tâche, lire `complete` et `warnings`, puis appeler `monday_get_image` pour chaque pièce jointe qu'il doit voir.
+Un déroulé typique pour un agent : appeler `monday_read_task` avec le lien de la tâche, lire `complete` et `warnings`, puis appeler `monday_get_image` pour chaque pièce jointe qu'il doit voir. `attachments` contient les images de l'élément, de ses mises à jour et de leurs réponses. Chaque image d'une mise à jour ou d'une réponse la nomme dans `updateId`. Une lecture prend au plus 50 images, celles des mises à jour les plus récentes d'abord.
 
 ### Écrire dans monday
 
@@ -237,7 +237,7 @@ L'interrupteur **Allow writing**, sous le power button, permet aux agents de mod
 1. À l'ouverture d'une session d'agent, son serveur MCP (démarré par la CLI de l'agent) démarre le bridge en arrière-plan s'il ne tourne pas, et vérifie toutes les 15 secondes qu'il tourne toujours. L'extension se connecte au bridge en moins de 30 secondes, ou aussitôt que vous ouvrez la popup. Un bridge qui vient de démarrer fait attendre la requête d'un agent jusqu'à 40 secondes, le temps que l'extension se connecte. Pour ne démarrer le bridge qu'au premier appel d'outil, définissez `MONDAY_BRIDGE_AUTOSTART=0` dans l'environnement du serveur MCP.
 2. Un agent appelle un outil MCP, et le serveur MCP transmet la requête au bridge.
 3. Le bridge envoie la requête à l'extension appairée via un WebSocket local.
-4. L'extension appelle **la propre API web de monday** (`https://<account>.monday.com/v2`, GraphQL) : le même endpoint que celui de l'application web de monday, avec votre session de navigateur et le token CSRF de l'application. Une seule requête renvoie le nom de la tâche, chaque colonne sous forme de texte, les mises à jour avec leurs réponses et leurs auteurs, et les fichiers joints. Aucun onglet ne s'ouvre.
+4. L'extension appelle **la propre API web de monday** (`https://<account>.monday.com/v2`, GraphQL) : le même endpoint que celui de l'application web de monday, avec votre session de navigateur et le token CSRF de l'application. Une seule requête renvoie le nom de la tâche, chaque colonne sous forme de texte, les mises à jour avec leurs réponses et leurs auteurs, et les fichiers joints à l'élément, aux mises à jour et aux réponses. Aucun onglet ne s'ouvre.
 5. Les images originales sont téléchargées depuis le stockage de fichiers de monday et vérifiées octet par octet. Les fichiers qui ne sont pas des images sont listés dans un champ `Other files`.
 6. L'instantané revient au bridge, qui le met en cache et le renvoie à l'agent.
 

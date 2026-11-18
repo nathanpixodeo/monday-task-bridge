@@ -14,7 +14,7 @@ export const ITEM_QUERY = `query TaskSnapshot($ids: [ID!]) {
       text_body
       created_at
       creator { name }
-      replies { id text_body created_at creator { name } }
+      replies { id text_body created_at creator { name } assets { id name file_extension url public_url } }
       assets { id name file_extension url public_url }
     }
     assets { id name file_extension url public_url }
@@ -24,15 +24,11 @@ export const ITEM_QUERY = `query TaskSnapshot($ids: [ID!]) {
 /** Updates beyond this many are not read; the query asks for the latest ones. */
 export const UPDATE_LIMIT = 100
 
+/** Images beyond this many are not read: the bridge takes at most 50 original images with one capture. */
+export const MAX_IMAGES = 50
+
 interface ApiPerson {
   name?: string | null
-}
-
-interface ApiReply {
-  id: string | number
-  text_body?: string | null
-  created_at?: string | null
-  creator?: ApiPerson | null
 }
 
 interface ApiAsset {
@@ -43,9 +39,16 @@ interface ApiAsset {
   public_url?: string | null
 }
 
+interface ApiReply {
+  id: string | number
+  text_body?: string | null
+  created_at?: string | null
+  creator?: ApiPerson | null
+  assets?: ApiAsset[] | null
+}
+
 interface ApiUpdate extends ApiReply {
   replies?: ApiReply[] | null
-  assets?: ApiAsset[] | null
 }
 
 export interface ApiItem {
@@ -66,8 +69,11 @@ export interface MappedTask {
     body: string
     replies: Array<{ id: string; author: string; createdAt: string; body: string }>
   }>
-  /** Image files only; the snapshot carries original images, other files are listed in a field. */
-  attachments: Array<{ id: string; name: string; mimeType: string; url: string }>
+  /**
+   * Image files only; the snapshot carries original images, other files are listed in a field. `updateId` is the
+   * update or reply the image is on; an image only on the item has none.
+   */
+  attachments: Array<{ id: string; name: string; mimeType: string; url: string; updateId?: string }>
   warnings: string[]
 }
 
@@ -101,25 +107,40 @@ export function mapItem(item: ApiItem): MappedTask {
 
   const updates = (item.updates ?? []).map((u) => ({ ...reply(u), replies: (u.replies ?? []).map(reply) }))
 
-  // The same file can be attached to the item and to an update; keep one entry per asset
-  const assets = new Map<string, ApiAsset>()
-  for (const asset of [...(item.assets ?? []), ...(item.updates ?? []).flatMap((u) => u.assets ?? [])]) {
-    assets.set(String(asset.id), asset)
+  // Newest update first, each followed by its replies, then the item's own files. The same file can be attached to
+  // the item and to an update: the first place it is found is kept, so an image names the update or reply it is on.
+  const found: Array<{ asset: ApiAsset; updateId?: string }> = []
+  for (const update of item.updates ?? []) {
+    for (const asset of update.assets ?? []) found.push({ asset, updateId: String(update.id) })
+    for (const r of update.replies ?? []) {
+      for (const asset of r.assets ?? []) found.push({ asset, updateId: String(r.id) })
+    }
   }
+  for (const asset of item.assets ?? []) found.push({ asset })
 
+  const seen = new Set<string>()
   const attachments: MappedTask['attachments'] = []
   const otherFiles: string[] = []
-  for (const asset of assets.values()) {
+  let images = 0
+  for (const { asset, updateId } of found) {
+    const id = String(asset.id)
+    if (seen.has(id)) continue
+    seen.add(id)
     const name = asset.name ?? `asset-${asset.id}`
     const mimeType = IMAGE_TYPES[(asset.file_extension ?? '').replace(/^\./, '').toLowerCase()]
     const url = asset.public_url || asset.url
-    if (mimeType && url) attachments.push({ id: String(asset.id), name, mimeType, url })
-    else otherFiles.push(name)
+    if (mimeType && url) {
+      images++
+      if (attachments.length < MAX_IMAGES) attachments.push({ id, name, mimeType, url, ...(updateId ? { updateId } : {}) })
+    } else {
+      otherFiles.push(name)
+    }
   }
   if (otherFiles.length) fields[OTHER_FILES_FIELD] = otherFiles.join(', ')
 
   const warnings: string[] = []
   if (updates.length >= UPDATE_LIMIT) warnings.push(`Only the latest ${UPDATE_LIMIT} updates were read`)
+  if (images > MAX_IMAGES) warnings.push(`Only ${MAX_IMAGES} of ${images} images were read, those on the newest updates first`)
 
   return { title: item.name ?? '', fields, updates, attachments, warnings }
 }
