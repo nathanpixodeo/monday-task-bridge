@@ -14,7 +14,8 @@ import type {
   CapturePayload,
   AssignedTasksPayload,
   ExtensionToBridgeMessage,
-  BridgeToExtensionMessage
+  BridgeToExtensionMessage,
+  StagedFile
 } from '../shared/types'
 
 const BRIDGE_OFFLINE_MESSAGE = 'Cannot reach the bridge at 127.0.0.1:3457. Open an agent session to start it, or run: monday-bridge start'
@@ -102,7 +103,7 @@ async function connectWs() {
           socket.send(JSON.stringify({
             type: 'hello',
             token: c.token,
-            capabilities: ['assignedTasks', 'boardFilter', 'boardItems', 'writeBack', 'write', 'updateEdits'],
+            capabilities: ['assignedTasks', 'boardFilter', 'boardItems', 'writeBack', 'write', 'updateEdits', 'updateFiles'],
             writeEnabled: c.allowWrite
           } satisfies ExtensionToBridgeMessage))
         }
@@ -581,6 +582,46 @@ async function mondayGraphql<T>(host: string, query: string, variables: Record<s
   }
 }
 
+/**
+ * Attaches one image the bridge holds to an update, the way monday's web app uploads: a multipart GraphQL request
+ * to `/v2/file` with the session cookie and `x-csrf-token`. `updateId` is digits only (checked by the caller).
+ */
+async function mondayAttachFile(host: string, updateId: string, file: StagedFile): Promise<void> {
+  const { token } = await getConfig()
+  const held = await fetch(`http://127.0.0.1:3457/v1/uploads/${file.uploadId}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(30_000)
+  })
+  if (!held.ok) throw new Error(`the bridge no longer holds the image (HTTP ${held.status})`)
+  const image = new Blob([await held.arrayBuffer()], { type: file.mimeType })
+  const query = `mutation AttachFile($file: File!) { add_file_to_update(update_id: ${updateId}, file: $file) { id } }`
+
+  for (let attempt = 0; ; attempt++) {
+    const form = new FormData()
+    form.append('query', query)
+    form.append('variables[file]', image, file.name)
+    const res = await fetch(`https://${host}/v2/file`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'x-csrf-token': await csrfTokenFor(host, attempt > 0) },
+      body: form,
+      signal: AbortSignal.timeout(120_000)
+    })
+    // A rejected token usually means the session was renewed; fetch a fresh one once
+    if ((res.status === 401 || res.status === 403) && attempt === 0) continue
+    const body = (await res.json().catch(() => ({}))) as {
+      data?: { add_file_to_update?: { id?: unknown } | null }
+      errors?: Array<{ message?: string }>
+      error_message?: string
+    }
+    if (!res.ok || body.errors?.length || body.data?.add_file_to_update?.id == null) {
+      throw new Error(`monday API: ${body.errors?.[0]?.message ?? body.error_message ?? `HTTP ${res.status}`}`)
+    }
+    return
+  }
+}
+
 async function readTaskViaApi(host: string, itemId: string): Promise<MappedTask> {
   const data = await mondayGraphql<{ items: ApiItem[] }>(host, ITEM_QUERY, { ids: [itemId] })
   const item = data.items?.[0]
@@ -942,7 +983,7 @@ async function write(msg: Extract<BridgeToExtensionMessage, { type: 'write' }>) 
     const agent = cleanAgentName(msg.agent)
     let written
     try {
-      written = await performWrite(mondayGraphql, account, msg)
+      written = await performWrite(mondayGraphql, account, msg, mondayAttachFile)
     } catch (err) {
       await recordActivity(writeActivity(account, msg, { error: err }, agent, new Date().toISOString()))
       throw err

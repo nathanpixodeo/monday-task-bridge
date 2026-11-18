@@ -199,16 +199,18 @@ Writing is off until you turn it on. Open the extension popup and switch on **Al
 
 | MCP tool | Result |
 | --- | --- |
-| `monday_add_update` | Adds an update to an item, or replies to one of its updates (`replyToUpdateId`). Tags people with `mentions` (`"me"`, ids, emails or full names): each is notified, and the tag goes where the text writes `@Their Name`, else at the start. |
+| `monday_add_update` | Adds an update to an item, or replies to one of its updates (`replyToUpdateId`). Tags people with `mentions` (`"me"`, ids, emails or full names): each is notified, and the tag goes where the text writes `@Their Name`, else at the start. Attaches images with `files`: absolute paths of PNG, JPEG, GIF, or WebP files, at most 10, up to 20 MB each. |
 | `monday_update_item` | Sets columns in one change, by column title or id: a status label, tags (a list, or `{add, remove}`), people (emails, full names, or `"me"`; a list, or `{add, remove}`), a date `YYYY-MM-DD` or `YYYY-MM-DD HH:mm`, a timeline `{from, to}`, numbers, text, long text, a checkbox, dropdown labels, a link, or the item name. `null` clears a column. |
 | `monday_create_item` | Creates an item in a group (by title or id), or a subitem under `parentItemId`, and can set its columns. |
 | `monday_move_item` | Moves an item to another group (by title or id). |
 | `monday_edit_update` | Replaces the text of an update or a reply (`updateId`) on an item. The text is written as for a new update; people in `mentions` are tagged, but monday does not notify them again. monday decides whether your account may edit it. |
 | `monday_delete_update` | Deletes an update or a reply (`updateId`) on an item for good, with its replies, and returns the text it had (`deletedBody`), so it can be posted again. monday decides whether your account may delete it. |
 
+To post a Figma design on a task, the agent exports the frame with Figma's `get_design_image`, then passes the saved file's path in `files`. The bridge reads every file and checks that it is an image before anything is posted. A file that is not one stops the write, so nothing else on your disk can go up with an update. If an upload fails after the update was added, the error names that update.
+
 Only an update is ever deleted, and only with `monday_delete_update`; no item is deleted or archived. An update is edited or deleted only when it is on the item given. A missing tag is created only when the agent passes `createMissingTags`. A missing status or dropdown label is created only when the agent passes `createMissingLabels`. No write is retried.
 
-Agents always see these six tools. While the switch is off, they return `WRITE_DISABLED`, and the agent should ask you to switch writing on. The bridge and the extension both check the switch. `monday-bridge status` shows it on the `Writing:` line. In `auto` approval mode, agent CLIs add and edit updates without asking, and ask before every other write. They always ask before `monday_delete_update`, which is also marked destructive (`destructiveHint`). An extension from before edits answers `EXTENSION_UPDATE_REQUIRED` to the two update tools: reload it in `chrome://extensions`.
+Agents always see these six tools. While the switch is off, they return `WRITE_DISABLED`, and the agent should ask you to switch writing on. The bridge and the extension both check the switch. `monday-bridge status` shows it on the `Writing:` line. In `auto` approval mode, agent CLIs add and edit updates without asking, and ask before every other write. They always ask before `monday_delete_update`, which is also marked destructive (`destructiveHint`). An extension from before edits answers `EXTENSION_UPDATE_REQUIRED` to the two update tools, and one from before images answers it to an update with `files`: reload it in `chrome://extensions`.
 
 `monday_write_back` is separate, for Nexkit Agent Hub. It adds an update to an item and can set its Status. Agents see it only when their MCP client starts the server with `MONDAY_BRIDGE_ALLOW_WRITE=1`. The installer does not set it, and the popup switch does not apply to it.
 

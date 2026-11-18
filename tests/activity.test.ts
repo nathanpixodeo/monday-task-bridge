@@ -82,6 +82,25 @@ test('an update logs its text, the people tagged, and a link to the update', () 
   assert.equal(reply.title, 'Item 456')
   assert.equal(reply.replyTo, '77')
   assert.equal(activityLabel(reply), 'Reply')
+
+  // The images attached, or the ones asked for when the upload failed
+  const attachments = [{ uploadId: 'a'.repeat(32), name: 'frame.png', mimeType: 'image/png', size: 10 }]
+  const withImages = writeActivity(
+    HOST,
+    { op: 'add-update', boardId: '123', itemId: '456', body: 'Design', attachments },
+    { result: { op: 'add-update', accountHost: HOST, boardId: '123', itemId: '456', updateId: '903', files: ['frame.png'] } },
+    null,
+    AT
+  )
+  assert.deepEqual(withImages.files, ['frame.png'])
+  const failed = writeActivity(
+    HOST,
+    { op: 'add-update', boardId: '123', itemId: '456', body: 'Design', attachments },
+    { error: new Error('Added update 903, but could not attach frame.png: monday API: HTTP 413') },
+    null,
+    AT
+  )
+  assert.deepEqual([failed.ok, failed.files], [false, ['frame.png']])
 })
 
 test('an edited update logs its new text and a link; a deleted one logs the text it had', () => {

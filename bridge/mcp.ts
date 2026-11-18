@@ -7,7 +7,7 @@
  *   monday_list_assigned_tasks – list tasks assigned to the signed-in user (live, not stored)
  *   monday_list_boards      – list the boards the user can be assigned on, to read one at a time
  *   monday_list_board_items – list every item of one board or of some of its groups (agent CLIs always ask)
- *   monday_add_update       – add an update to an item, or reply to one of its updates
+ *   monday_add_update       – add an update to an item, or reply to one of its updates, with images attached
  *   monday_update_item      – set column values: status, tags, people, dates, text, numbers, ...
  *   monday_create_item      – create an item on a board, or a subitem under an item
  *   monday_move_item        – move an item to another group
@@ -35,6 +35,7 @@ import { z } from 'zod'
 import { ensureBridge } from './autostart.js'
 import { Store } from './store.js'
 import type { StoredSnapshot } from './store.js'
+import { imageMimeOf, MAX_UPLOAD_FILES } from './uploads.js'
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -312,7 +313,10 @@ mcp.tool(
   'monday_add_update',
   'Add an update (a comment) to one monday item, or reply to one of its updates with replyToUpdateId. ' +
     'The text is posted as written; line breaks are kept. To tag (mention) people, list them in mentions: each is ' +
-    'notified, and the tag goes where the body writes "@Their Full Name", else at the start of the update.' + WRITES_NOTE,
+    'notified, and the tag goes where the body writes "@Their Full Name", else at the start of the update. ' +
+    'To attach images, such as a Figma frame exported with get_design_image, list their absolute paths in files: ' +
+    'PNG, JPEG, GIF or WebP only, up to 20 MB each. Every file is checked before anything is posted; if one fails to ' +
+    'upload afterwards, the error names the update that was added.' + WRITES_NOTE,
   {
     accountHost: accountHostArg,
     boardId: z.string().describe('The board of the item'),
@@ -321,6 +325,8 @@ mcp.tool(
     replyToUpdateId: z.string().optional().describe('An update on this item to reply to, instead of adding a new update'),
     mentions: z.array(z.string()).optional()
       .describe('People to tag in the update: "me", user ids, emails, or full names (a name must match exactly one user)'),
+    files: z.array(z.string()).max(MAX_UPLOAD_FILES).optional()
+      .describe('Absolute paths of local PNG, JPEG, GIF or WebP images to attach to the update, in this order'),
   },
   async (args) => writeVia({ op: 'add-update', ...args })
 )
@@ -491,12 +497,7 @@ mcp.tool(
         }
       }
 
-      // Try to detect MIME from first bytes
-      let mimeType = 'image/png'
-      if (buf[0] === 0xFF && buf[1] === 0xD8) mimeType = 'image/jpeg'
-      else if (buf[0] === 0x89 && buf[1] === 0x50) mimeType = 'image/png'
-      else if (buf[0] === 0x47 && buf[1] === 0x49) mimeType = 'image/gif'
-      else if (buf[0] === 0x52 && buf[1] === 0x49) mimeType = 'image/webp'
+      const mimeType = imageMimeOf(buf) ?? 'image/png'
 
       return {
         content: [{

@@ -201,16 +201,18 @@ Quyền ghi tắt cho tới khi bạn bật. Mở popup của extension và bậ
 
 | MCP tool | Kết quả |
 | --- | --- |
-| `monday_add_update` | Thêm một update vào item, hoặc reply một update của item (`replyToUpdateId`). Tag người bằng `mentions` (`"me"`, id, email hoặc tên đầy đủ): mỗi người nhận thông báo, tag nằm ở chỗ nội dung viết `@Tên Người Đó`, nếu không thì ở đầu update. |
+| `monday_add_update` | Thêm một update vào item, hoặc reply một update của item (`replyToUpdateId`). Tag người bằng `mentions` (`"me"`, id, email hoặc tên đầy đủ): mỗi người nhận thông báo, tag nằm ở chỗ nội dung viết `@Tên Người Đó`, nếu không thì ở đầu update. Đính kèm ảnh bằng `files`: đường dẫn tuyệt đối của file PNG, JPEG, GIF hoặc WebP, tối đa 10 file, mỗi file tối đa 20 MB. |
 | `monday_update_item` | Đổi nhiều cột trong một lần, theo tên hoặc id cột: label status, tags (một danh sách, hoặc `{add, remove}`), people (email, họ tên đầy đủ, hoặc `"me"`; một danh sách, hoặc `{add, remove}`), ngày `YYYY-MM-DD` hoặc `YYYY-MM-DD HH:mm`, timeline `{from, to}`, số, text, long text, checkbox, label dropdown, link, hoặc tên item. `null` xoá giá trị cột. |
 | `monday_create_item` | Tạo item trong một group (theo tên hoặc id), hoặc tạo subitem dưới `parentItemId`, và có thể đặt các cột của nó. |
 | `monday_move_item` | Chuyển item sang group khác (theo tên hoặc id). |
 | `monday_edit_update` | Thay nội dung của một update hoặc reply (`updateId`) trên item. Nội dung được ghi giống update mới; người trong `mentions` được tag, nhưng monday không gửi thông báo lần nữa. monday quyết định tài khoản của bạn có được sửa hay không. |
 | `monday_delete_update` | Xoá hẳn một update hoặc reply (`updateId`) trên item, kèm các reply của nó, và trả lại nội dung cũ (`deletedBody`) để có thể đăng lại. monday quyết định tài khoản của bạn có được xoá hay không. |
 
+Để đăng design Figma lên task, agent export frame bằng `get_design_image` của Figma, rồi truyền đường dẫn file đã lưu vào `files`. Bridge đọc từng file và kiểm tra đó là ảnh trước khi đăng bất cứ thứ gì. File không phải ảnh sẽ chặn lần ghi, nên không file nào khác trên ổ đĩa có thể bị gửi kèm update. Nếu upload lỗi sau khi update đã được thêm, thông báo lỗi nêu rõ update đó.
+
 Chỉ update có thể bị xoá, và chỉ qua `monday_delete_update`; không item nào bị xoá hay archive. Update chỉ được sửa hoặc xoá khi nó nằm trên item được chỉ định. Tag chưa có chỉ được tạo khi agent truyền `createMissingTags`. Label status hoặc dropdown chưa có chỉ được tạo khi agent truyền `createMissingLabels`. Không lần ghi nào được thử lại.
 
-Agent luôn thấy sáu tool này. Khi công tắc tắt, các tool trả về `WRITE_DISABLED`, và agent nên nhờ bạn bật quyền ghi. Cả bridge và extension đều kiểm tra công tắc. `monday-bridge status` hiện trạng thái ở dòng `Writing:`. Ở chế độ duyệt `auto`, agent CLI thêm và sửa update mà không hỏi, và hỏi trước mọi lần ghi khác. Agent CLI luôn hỏi trước `monday_delete_update`; tool này còn được đánh dấu destructive (`destructiveHint`). Extension bản cũ, chưa hỗ trợ sửa, trả `EXTENSION_UPDATE_REQUIRED` cho hai tool update này: reload extension trong `chrome://extensions`.
+Agent luôn thấy sáu tool này. Khi công tắc tắt, các tool trả về `WRITE_DISABLED`, và agent nên nhờ bạn bật quyền ghi. Cả bridge và extension đều kiểm tra công tắc. `monday-bridge status` hiện trạng thái ở dòng `Writing:`. Ở chế độ duyệt `auto`, agent CLI thêm và sửa update mà không hỏi, và hỏi trước mọi lần ghi khác. Agent CLI luôn hỏi trước `monday_delete_update`; tool này còn được đánh dấu destructive (`destructiveHint`). Extension bản cũ, chưa hỗ trợ sửa, trả `EXTENSION_UPDATE_REQUIRED` cho hai tool update này; extension chưa hỗ trợ ảnh trả lỗi này cho update có `files`: reload extension trong `chrome://extensions`.
 
 `monday_write_back` là tool riêng, dành cho Nexkit Agent Hub. Tool này thêm một update vào item và có thể đặt cột Status của item. Agent chỉ thấy tool này khi MCP client của nó khởi động server với `MONDAY_BRIDGE_ALLOW_WRITE=1`. Trình cài đặt không đặt biến này, và công tắc trong popup không áp dụng cho tool này.
 

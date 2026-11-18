@@ -128,6 +128,15 @@ export type ColumnInput =
 /** Column values keyed by a column's title (case does not matter) or id. */
 export type ColumnInputs = Record<string, ColumnInput>
 
+/** An image the bridge holds for a write, until the extension fetches it with POST /v1/uploads/:uploadId. */
+export interface StagedFile {
+  uploadId: string
+  /** The file's name, as monday shows it. */
+  name: string
+  mimeType: string
+  size: number
+}
+
 /** What an agent asks to write to monday while "Allow writing" is on in the extension popup. */
 export type WriteRequest = { accountHost?: string } & (
   | {
@@ -138,6 +147,10 @@ export type WriteRequest = { accountHost?: string } & (
       replyToUpdateId?: string
       /** People to tag in the update: "me", user ids, emails or full names. */
       mentions?: string[]
+      /** Absolute paths of local images to attach, as the agent gives them; the bridge never passes them on. */
+      files?: string[]
+      /** The images the bridge holds for this update, to fetch from it and attach; set by the bridge only. */
+      attachments?: StagedFile[]
     }
   | {
       op: 'update-item'
@@ -186,6 +199,8 @@ export interface WriteResult {
   deletedBody?: string
   /** The names of the people tagged in the update, for add-update. */
   mentioned?: string[]
+  /** The names of the images attached to the update, for add-update. */
+  files?: string[]
   /** The titles of the columns set, for update-item and create-item. */
   columnsSet?: string[]
   /** The group the item is in now, for move-item and create-item. */

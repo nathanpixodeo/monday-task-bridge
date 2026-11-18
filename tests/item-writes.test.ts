@@ -82,6 +82,41 @@ test('adds an update with its text kept, and replies only to an update on the sa
   assert.ok(!fake.names().slice(before).includes('WriteAddUpdate'))
 })
 
+test('attaches the images to the update it adds, in order, and names the update when one fails', async () => {
+  const fake = fakeGraphql({
+    WriteItem: () => itemOn('123'),
+    WriteAddUpdate: () => ({ create_update: { id: 901 } })
+  })
+  const attachments = [
+    { uploadId: 'a'.repeat(32), name: 'frame.png', mimeType: 'image/png', size: 10 },
+    { uploadId: 'b'.repeat(32), name: 'mobile.png', mimeType: 'image/png', size: 20 },
+    { uploadId: 'c'.repeat(32), name: 'tablet.png', mimeType: 'image/png', size: 30 }
+  ]
+  const request = { op: 'add-update' as const, boardId: '123', itemId: '456', body: 'Design', attachments }
+
+  const uploads: string[] = []
+  const added = await performWrite(fake.graphql, HOST, request, async (host, updateId, file) => {
+    uploads.push(`${host} ${updateId} ${file.uploadId}`)
+  })
+  assert.deepEqual(added, {
+    op: 'add-update', accountHost: HOST, boardId: '123', itemId: '456', updateId: '901', files: ['frame.png', 'mobile.png', 'tablet.png']
+  })
+  assert.deepEqual(uploads, attachments.map((file) => `${HOST} 901 ${file.uploadId}`))
+
+  // The update stays; the error says which one, and what was attached before the failure
+  await assert.rejects(
+    performWrite(fake.graphql, HOST, request, async (_host, _updateId, file) => {
+      if (file.name === 'mobile.png') throw new Error('monday API: HTTP 413')
+    }),
+    { message: 'Added update 901, but could not attach mobile.png (attached before the failure: frame.png): monday API: HTTP 413' }
+  )
+
+  // Without a way to attach, nothing is posted
+  const before = fake.calls.length
+  await assert.rejects(performWrite(fake.graphql, HOST, request), /cannot attach images/)
+  assert.ok(!fake.names().slice(before).includes('WriteAddUpdate'))
+})
+
 const tagOf = (id: number, name: string) =>
   `<a class="user_mention_editor router" href="https://${HOST}/users/${id}" data-mention-type="User" ` +
   `data-mention-id="${id}" target="_blank" rel="noopener noreferrer">@${name}</a>`

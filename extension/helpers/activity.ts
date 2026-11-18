@@ -28,6 +28,8 @@ export interface ActivityEntry {
   replyTo?: string
   /** The names of the people tagged in the update. */
   mentioned?: string[]
+  /** The names of the images attached to the update added. */
+  files?: string[]
   /** The columns set, with the values as the agent gave them. */
   columns?: Array<{ title: string; value: string }>
   /** The group the item went to, for a move or a new item. */
@@ -107,7 +109,10 @@ export function writeActivity(
         body: cut(request.body),
         ...(result?.updateId ? { updateUrl: `${url}/posts/${result.updateId}` } : {}),
         ...(request.replyToUpdateId ? { replyTo: request.replyToUpdateId } : {}),
-        ...(result?.mentioned?.length ? { mentioned: result.mentioned } : request.mentions?.length ? { mentioned: request.mentions } : {})
+        ...(result?.mentioned?.length ? { mentioned: result.mentioned } : request.mentions?.length ? { mentioned: request.mentions } : {}),
+        ...(result?.files?.length
+          ? { files: result.files }
+          : request.attachments?.length ? { files: request.attachments.map((file) => file.name) } : {})
       }
     case 'update-item':
     case 'create-item': {

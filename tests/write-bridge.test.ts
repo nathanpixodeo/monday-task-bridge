@@ -1,11 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer as createNetServer } from 'node:net'
 import WebSocket from 'ws'
-import type { BridgeToExtensionMessage } from '../shared/types.js'
+import type { BridgeToExtensionMessage, StagedFile } from '../shared/types.js'
+import { stagedCount } from '../bridge/uploads.js'
+
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9H8xkAAAAASUVORK5CYII=', 'base64')
 
 const extensionOrigin = `chrome-extension://${'d'.repeat(32)}`
 
@@ -98,6 +101,9 @@ test('the bridge relays an agent write only while "Allow writing" is on, and the
       { ...update, extra: true },
       { op: 'add-update', boardId: '123', itemId: '456', body: '  ' },
       { op: 'add-update', boardId: '123', itemId: '456', body: 'Hi', mentions: ['  '] },
+      { op: 'add-update', boardId: '123', itemId: '456', body: 'Hi', files: ['  '] },
+      { op: 'add-update', boardId: '123', itemId: '456', body: 'Hi', files: Array(11).fill('/tmp/a.png') },
+      { op: 'add-update', boardId: '123', itemId: '456', body: 'Hi', attachments: [] },
       { op: 'create-item', boardId: '123', name: 'x', parentItemId: '456', group: 'Done' },
       { op: 'move-item', boardId: '123', itemId: '456' },
       { ...editUpdate, body: '  ' },
@@ -166,6 +172,70 @@ test('the bridge relays an agent write only while "Allow writing" is on, and the
     // The extension's refusal also turned the bridge's view of the switch off
     assert.equal((await health()).writeEnabled, false)
     assert.equal((await send(update, adminHeaders)).status, 403)
+
+    // Images: the bridge reads them, and the extension gets their ids only, never a path or the bytes
+    const frame = join(dataDir, 'frame.png')
+    const secret = join(dataDir, 'secret.png')
+    await writeFile(frame, PNG)
+    await writeFile(secret, 'API_KEY=abc')
+    const withImages = { op: 'add-update', accountHost: 'team.monday.com', boardId: '123', itemId: '456', body: 'Design', files: [frame] }
+
+    // An extension that cannot attach images is asked to reload, before it could post a bare update
+    const noFiles = await send(withImages, adminHeaders)
+    assert.equal(noFiles.status, 502)
+    assert.match((await noFiles.json() as { error: string }).error, /^EXTENSION_UPDATE_REQUIRED: .*attach images/)
+    assert.equal(stagedCount(), 0)
+
+    const imaging = await connect(['assignedTasks', 'boardFilter', 'writeBack', 'write', 'updateEdits', 'updateFiles'], true)
+    // A file that cannot go up stops the write before the extension hears of it
+    for (const [files, reason] of [
+      [['frame.png'], /is not an absolute path/],
+      [[join(dataDir, 'missing.png')], /^No file at /],
+      [[frame, secret], /secret\.png is not a PNG, JPEG, GIF or WebP image/]
+    ] as const) {
+      const res = await send({ ...withImages, files }, adminHeaders)
+      assert.equal(res.status, 400)
+      assert.match((await res.json() as { error: string }).error, reason)
+    }
+    assert.equal(stagedCount(), 0)
+
+    const posting = send(withImages, adminHeaders)
+    // The first command the extension gets is this write: none of the refused ones reached it
+    const imageWrite = await imaging.nextCommand() as unknown as { requestId: string; attachments?: StagedFile[] }
+    const { attachments, ...sent } = imageWrite
+    assert.deepEqual(sent, { type: 'write', requestId: imageWrite.requestId, op: 'add-update', accountHost: 'team.monday.com', boardId: '123', itemId: '456', body: 'Design' })
+    assert.equal(attachments?.length, 1)
+    assert.deepEqual({ ...attachments[0], uploadId: '' }, { uploadId: '', name: 'frame.png', mimeType: 'image/png', size: PNG.length })
+
+    // The extension fetches the bytes with its token, from its own origin only
+    const held = `${base}/v1/uploads/${attachments[0].uploadId}`
+    const extensionHeaders = { Origin: extensionOrigin, Authorization: `Bearer ${token}` }
+    assert.equal((await fetch(held, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })).status, 403)
+    assert.equal((await fetch(held, { method: 'POST', headers: { Origin: extensionOrigin } })).status, 401)
+    assert.equal((await fetch(held, { method: 'POST', headers: { ...extensionHeaders, Authorization: 'Bearer wrong' } })).status, 403)
+    assert.equal((await fetch(`${base}/v1/uploads/${'0'.repeat(32)}`, { method: 'POST', headers: extensionHeaders })).status, 404)
+    const bytes = await fetch(held, { method: 'POST', headers: extensionHeaders })
+    assert.equal(bytes.status, 200)
+    assert.equal(bytes.headers.get('content-type'), 'image/png')
+    assert.ok(Buffer.from(await bytes.arrayBuffer()).equals(PNG))
+
+    const attached = { op: 'add-update', accountHost: 'team.monday.com', boardId: '123', itemId: '456', updateId: '903', files: ['frame.png'] }
+    imaging.ws.send(JSON.stringify({ type: 'write-result', requestId: imageWrite.requestId, result: attached }))
+    const posted = await posting
+    assert.equal(posted.status, 200)
+    assert.deepEqual(await posted.json(), attached)
+    // The bytes go once the write has settled
+    assert.equal(stagedCount(), 0)
+    assert.equal((await fetch(held, { method: 'POST', headers: extensionHeaders })).status, 404)
+
+    // A failed upload releases them too
+    const failing = send(withImages, adminHeaders)
+    const again = await imaging.nextCommand()
+    imaging.ws.send(JSON.stringify({ type: 'write-result', requestId: again.requestId, error: 'Added update 904, but could not attach frame.png: monday API: HTTP 413' }))
+    const failed = await failing
+    assert.equal(failed.status, 502)
+    assert.match((await failed.json() as { error: string }).error, /^Added update 904/)
+    assert.equal(stagedCount(), 0)
   } finally {
     for (const ws of sockets) ws.close()
     await closeServer(server)

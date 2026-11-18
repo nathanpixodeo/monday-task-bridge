@@ -29,10 +29,12 @@ import {
   resolveTaskUrl,
   validateCaptureSize,
 } from './validate.js'
+import { releaseStaged, stagedFile, stageFiles, UploadError } from './uploads.js'
 import type {
   AssignedTasks,
   CapturePayload,
   ExtensionToBridgeMessage,
+  StagedFile,
   BridgeToExtensionMessage,
   WriteBackRequest,
   WriteBackResult,
@@ -445,11 +447,24 @@ export async function requestWriteBack(request: WriteBackRequest, agent?: string
 /** Ops an extension can do only once its hello lists `updateEdits`. */
 const UPDATE_EDIT_OPS: ReadonlySet<WriteRequest['op']> = new Set(['edit-update', 'delete-update'])
 
+/** The write as the extension gets it: the image paths stay in the bridge, and the images it holds go in their place. */
+function toExtension(request: WriteRequest, attachments: readonly StagedFile[]): WriteRequest {
+  if (request.op !== 'add-update') return request
+  const { files: _paths, attachments: _unused, ...rest } = request
+  return attachments.length ? { ...rest, attachments: [...attachments] } : rest
+}
+
 /**
  * Ask the extension to do one write an agent asked for. Refused here while "Allow writing" is off in the popup; the
- * extension checks the switch again before it writes. Never retried.
+ * extension checks the switch again before it writes. Never retried. `attachments` are the images staged for an
+ * add-update (uploads.ts).
  */
-export async function requestWrite(request: WriteRequest, cachedHost?: string, agent?: string): Promise<WriteResult> {
+export async function requestWrite(
+  request: WriteRequest,
+  cachedHost?: string,
+  agent?: string,
+  attachments: readonly StagedFile[] = []
+): Promise<WriteResult> {
   await waitForExtension()
   const target = liveTarget()
   if (target && !target.capabilities?.includes('write')) {
@@ -458,9 +473,14 @@ export async function requestWrite(request: WriteRequest, cachedHost?: string, a
   if (target && UPDATE_EDIT_OPS.has(request.op) && !target.capabilities?.includes('updateEdits')) {
     return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to edit or delete monday updates'))
   }
+  // An older extension would post the update and drop the images
+  if (target && attachments.length > 0 && !target.capabilities?.includes('updateFiles')) {
+    return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to attach images to monday updates'))
+  }
   if (target && target.writeEnabled !== true) return Promise.reject(new WriteDisabledError())
+  const sent = toExtension(request, attachments)
   // JSON.stringify drops cachedHost when it is undefined
-  return requestFromExtension(pendingWrites, (requestId) => ({ type: 'write', requestId, cachedHost, ...request, ...(agent ? { agent } : {}) }))
+  return requestFromExtension(pendingWrites, (requestId) => ({ type: 'write', requestId, cachedHost, ...sent, ...(agent ? { agent } : {}) }))
 }
 
 /** Settle a pending write or write-back with the extension's answer; only the socket the request went to may answer it. */
@@ -880,12 +900,26 @@ async function handleWrite(req: http.IncomingMessage, res: http.ServerResponse):
     return
   }
 
+  const request = parsed.data as WriteRequest
+
   // The extension prefers the host asked for, then an open monday tab, and only then this one
   const latestHost = (await store.getLatestSnapshot())?.snapshot.accountHost
   const cachedHost = latestHost && isMondayHost(latestHost) ? latestHost : undefined
 
+  // Every image is read and checked before anything is written, so a bad path never leaves a bare update behind
+  let attachments: StagedFile[] = []
+  if (request.op === 'add-update' && request.files?.length) {
+    try {
+      attachments = await stageFiles(request.files)
+    } catch (err: unknown) {
+      if (!(err instanceof UploadError)) throw err
+      json(res, 400, { error: err.message })
+      return
+    }
+  }
+
   try {
-    json(res, 200, await requestWrite(parsed.data as WriteRequest, cachedHost, agentOf(req)))
+    json(res, 200, await requestWrite(request, cachedHost, agentOf(req), attachments))
   } catch (err: unknown) {
     if (err instanceof WriteDisabledError) {
       json(res, 403, { error: err.message })
@@ -897,7 +931,30 @@ async function handleWrite(req: http.IncomingMessage, res: http.ServerResponse):
     }
     const msg = err instanceof Error ? err.message : 'Unknown error'
     json(res, 502, { error: msg })
+  } finally {
+    releaseStaged(attachments)
   }
+}
+
+/** The bytes of an image staged for a write, for the extension to upload to monday. */
+async function handleUpload(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  origin: string,
+  uploadId: string
+): Promise<void> {
+  if (!(await authenticateExtension(req, res, origin))) return
+  const file = stagedFile(uploadId)
+  if (!file) {
+    json(res, 404, { error: 'No image is held under this id' })
+    return
+  }
+  res.writeHead(200, {
+    'Content-Type': file.mimeType,
+    'Content-Length': file.bytes.length,
+    'Cache-Control': 'no-store',
+  })
+  res.end(file.bytes)
 }
 
 async function handleAssignedTasks(
@@ -1064,6 +1121,17 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     // POST /v1/write – MCP admin route: an agent's write, only while "Allow writing" is on in the popup
     if (method === 'POST' && pathname === '/v1/write') {
       await handleWrite(req, res)
+      return
+    }
+
+    // POST /v1/uploads/:id – extension route: the bytes of an image held for a write
+    const uploadMatch = pathname.match(/^\/v1\/uploads\/([a-f0-9]{32})$/)
+    if (method === 'POST' && uploadMatch) {
+      if (!origin || !isExtensionOrigin(origin)) {
+        json(res, 403, { error: 'Forbidden: requires chrome-extension Origin' })
+        return
+      }
+      await handleUpload(req, res, origin, uploadMatch[1])
       return
     }
 

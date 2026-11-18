@@ -47,6 +47,9 @@ test('MCP exposes cached task and original image with no monday API token', { ti
     // Deleting an update is the one tool marked destructive
     const destructive = tools.tools.filter(tool => tool.annotations?.destructiveHint === true).map(tool => tool.name)
     assert.deepEqual(destructive, ['monday_delete_update'])
+    // An update can carry images, named by their paths
+    const addUpdate = tools.tools.find(tool => tool.name === 'monday_add_update')
+    assert.ok(addUpdate && 'files' in (addUpdate.inputSchema.properties ?? {}))
 
     const task = await client.callTool({ name: 'monday_get_task', arguments: {} })
     assert.equal(task.isError, undefined)

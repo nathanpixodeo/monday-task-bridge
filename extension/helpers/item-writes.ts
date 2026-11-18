@@ -5,7 +5,7 @@
  * unit-tested; the caller supplies the session-authenticated GraphQL call.
  */
 
-import type { ColumnInput, ColumnInputs, WriteRequest, WriteResult } from '../../shared/types'
+import type { ColumnInput, ColumnInputs, StagedFile, WriteRequest, WriteResult } from '../../shared/types'
 import type { Graphql } from './assigned-tasks'
 import { escapeHtml, idOf, readItem, updateBody } from './write-back'
 import type { ApiColumn } from './write-back'
@@ -492,10 +492,33 @@ async function readUpdateOn(graphql: Graphql, host: string, itemId: string, upda
 /** What the extension sends back, plus the item's name for the popup's activity log (never sent to the bridge). */
 export type PerformedWrite = WriteResult & { itemName?: string }
 
+/** Uploads one image the bridge holds to an update; the caller supplies the session-authenticated upload. */
+export type AttachFile = (host: string, updateId: string, file: StagedFile) => Promise<void>
+
+/** Attaches the images to the update just added, in order; a failure names the update and what was attached. */
+async function attachFiles(attach: AttachFile, host: string, updateId: string | null, files: StagedFile[]): Promise<string[]> {
+  // The id goes into the upload's query as it is, so it must be digits only
+  if (updateId === null || !/^\d{1,20}$/.test(updateId)) throw new Error('monday did not say which update it added, so no image was attached')
+  const attached: string[] = []
+  for (const file of files) {
+    try {
+      await attach(host, updateId, file)
+    } catch (err) {
+      const done = attached.length ? ` (attached before the failure: ${attached.join(', ')})` : ''
+      throw new Error(`Added update ${updateId}, but could not attach ${file.name}${done}: ${reasonOf(err)}`)
+    }
+    attached.push(file.name)
+  }
+  return attached
+}
+
 const named = (name: string | undefined) => (name ? { itemName: name } : {})
 
-/** Does one write an agent asked for; nothing is retried, so a failure is reported as it happened. */
-export async function performWrite(graphql: Graphql, host: string, request: WriteRequest): Promise<PerformedWrite> {
+/**
+ * Does one write an agent asked for; nothing is retried, so a failure is reported as it happened. `attach` uploads
+ * the images of an add-update.
+ */
+export async function performWrite(graphql: Graphql, host: string, request: WriteRequest, attach?: AttachFile): Promise<PerformedWrite> {
   switch (request.op) {
     case 'add-update': {
       const target = await readTarget(graphql, host, request.boardId, request.itemId)
@@ -503,6 +526,7 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
       if (request.replyToUpdateId !== undefined) await readUpdateOn(graphql, host, request.itemId, request.replyToUpdateId, false)
       // Every person is resolved before anything is written, so a name that matches no one stops the update
       const people = request.mentions?.length ? await mentionedPeople(graphql, host, request.boardId, request.mentions) : []
+      if (request.attachments?.length && !attach) throw new Error('This extension cannot attach images to an update')
       const created = await graphql(host, ADD_UPDATE, {
         itemId: request.itemId,
         body: bodyWithMentions(host, updateBody(request.body), people),
@@ -510,6 +534,7 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
         mentions: people.length ? people.map((person) => ({ id: person.id, type: 'User' })) : null
       })
       const updateId = idOf((created as { create_update?: { id?: unknown } | null } | null)?.create_update?.id)
+      const files = request.attachments?.length && attach ? await attachFiles(attach, host, updateId, request.attachments) : []
       return {
         op: request.op,
         accountHost: host,
@@ -517,6 +542,7 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
         itemId: request.itemId,
         ...(updateId ? { updateId } : {}),
         ...(people.length ? { mentioned: people.map((person) => person.name) } : {}),
+        ...(files.length ? { files } : {}),
         ...named(target.name)
       }
     }

@@ -332,6 +332,7 @@ export const WriteBodySchema = z.discriminatedUnion('op', [
     body: z.string().trim().min(1).max(20_000),
     replyToUpdateId: ItemIdSchema.optional(),
     mentions: NameListSchema.optional(),
+    files: z.array(z.string().trim().min(1).max(1024)).max(10).optional(),
   }).strict(),
   z.object({
     op: z.literal('update-item'),
@@ -386,6 +387,7 @@ export const WriteResultSchema = z.object({
   updateId: ItemIdSchema.optional(),
   deletedBody: z.string().max(100_000).optional(),
   mentioned: z.array(z.string().max(300)).max(100).optional(),
+  files: z.array(z.string().max(300)).max(10).optional(),
   columnsSet: z.array(z.string().max(256)).max(50).optional(),
   group: z.object({ id: MondayKeySchema, title: z.string().max(1000) }).strict().optional(),
   created: z.array(z.string().max(300)).max(100).optional(),

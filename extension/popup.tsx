@@ -1001,7 +1001,10 @@ function summaryOf(entry: ActivityEntry): string {
   if (!entry.ok) return 'Failed'
   switch (entry.kind) {
     case 'add-update':
-      return entry.mentioned?.length ? `Tagged ${entry.mentioned.length}` : 'Posted'
+      return [
+        entry.mentioned?.length ? `Tagged ${entry.mentioned.length}` : '',
+        entry.files?.length ? `${entry.files.length} image${entry.files.length > 1 ? 's' : ''}` : ''
+      ].filter(Boolean).join(', ') || 'Posted'
     case 'update-item':
       return entry.columns?.map((column) => column.title).join(', ') || 'Updated'
     case 'create-item':
@@ -1134,6 +1137,7 @@ function ActivityDetails({ entry, onClose }: { entry: ActivityEntry | null; onCl
               </Field>
             )}
             {entry.mentioned && entry.mentioned.length > 0 && <Field label="Tagged">{entry.mentioned.join(', ')}</Field>}
+            {entry.files && entry.files.length > 0 && <Field label="Images">{entry.files.join(', ')}</Field>}
             {entry.status && <Field label="Status">{entry.status}</Field>}
             {entry.columns && entry.columns.length > 0 && (
               <Field label="Columns">
