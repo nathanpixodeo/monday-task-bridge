@@ -313,7 +313,8 @@ mcp.tool(
   'monday_add_update',
   'Add an update (a comment) to one monday item, or reply to one of its updates with replyToUpdateId. ' +
     'The text is posted as written; line breaks are kept. To tag (mention) people, list them in mentions: each is ' +
-    'notified, and the tag goes where the body writes "@Their Full Name", else at the start of the update. ' +
+    'notified, and monday shows their tags at the end of the update. A "@Their Full Name" in the body is written as ' +
+    'their plain name, so nobody is tagged twice. ' +
     'To attach images, such as a Figma frame exported with get_design_image, list their absolute paths in files: ' +
     'PNG, JPEG, GIF or WebP only, up to 20 MB each. Every file is checked before anything is posted; if one fails to ' +
     'upload afterwards, the error names the update that was added.' + WRITES_NOTE,

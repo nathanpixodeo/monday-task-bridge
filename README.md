@@ -199,7 +199,7 @@ Writing is off until you turn it on. Open the extension popup and switch on **Al
 
 | MCP tool | Result |
 | --- | --- |
-| `monday_add_update` | Adds an update to an item, or replies to one of its updates (`replyToUpdateId`). Tags people with `mentions` (`"me"`, ids, emails or full names): each is notified, and the tag goes where the text writes `@Their Name`, else at the start. Attaches images with `files`: absolute paths of PNG, JPEG, GIF, or WebP files, at most 10, up to 20 MB each. |
+| `monday_add_update` | Adds an update to an item, or replies to one of its updates (`replyToUpdateId`). Tags people with `mentions` (`"me"`, ids, emails or full names): each is notified, and monday shows their tags at the end of the update. A `@Their Name` in the text is written as the plain name, so nobody is tagged twice. Attaches images with `files`: absolute paths of PNG, JPEG, GIF, or WebP files, at most 10, up to 20 MB each. |
 | `monday_update_item` | Sets columns in one change, by column title or id: a status label, tags (a list, or `{add, remove}`), people (emails, full names, or `"me"`; a list, or `{add, remove}`), a date `YYYY-MM-DD` or `YYYY-MM-DD HH:mm`, a timeline `{from, to}`, numbers, text, long text, a checkbox, dropdown labels, a link, or the item name. `null` clears a column. |
 | `monday_create_item` | Creates an item in a group (by title or id), or a subitem under `parentItemId`, and can set its columns. |
 | `monday_move_item` | Moves an item to another group (by title or id). |

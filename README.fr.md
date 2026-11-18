@@ -201,7 +201,7 @@ L'écriture est désactivée tant que vous ne l'activez pas. Ouvrez la popup de 
 
 | Outil MCP | Résultat |
 | --- | --- |
-| `monday_add_update` | Ajoute une mise à jour à un élément, ou répond à l'une de ses mises à jour (`replyToUpdateId`). Mentionne des personnes avec `mentions` (`"me"`, ids, e-mails ou noms complets) : chacune reçoit une notification, et la mention se place là où le texte écrit `@Son Nom`, sinon au début. Joint des images avec `files` : chemins absolus de fichiers PNG, JPEG, GIF ou WebP, 10 au plus, 20 Mo chacun au maximum. |
+| `monday_add_update` | Ajoute une mise à jour à un élément, ou répond à l'une de ses mises à jour (`replyToUpdateId`). Mentionne des personnes avec `mentions` (`"me"`, ids, e-mails ou noms complets) : chacune reçoit une notification, et monday affiche leurs mentions à la fin de la mise à jour. Un `@Son Nom` dans le texte est écrit comme le nom seul, pour que personne ne soit mentionné deux fois. Joint des images avec `files` : chemins absolus de fichiers PNG, JPEG, GIF ou WebP, 10 au plus, 20 Mo chacun au maximum. |
 | `monday_update_item` | Modifie des colonnes en une seule fois, par titre ou id de colonne : un libellé de statut, des tags (une liste, ou `{add, remove}`), des personnes (e-mails, noms complets ou `"me"` ; une liste, ou `{add, remove}`), une date `YYYY-MM-DD` ou `YYYY-MM-DD HH:mm`, une timeline `{from, to}`, des nombres, du texte, du texte long, une case à cocher, des libellés de liste déroulante, un lien, ou le nom de l'élément. `null` vide une colonne. |
 | `monday_create_item` | Crée un élément dans un groupe (par titre ou id), ou un sous-élément sous `parentItemId`, et peut remplir ses colonnes. |
 | `monday_move_item` | Déplace un élément vers un autre groupe (par titre ou id). |

@@ -186,7 +186,7 @@ test('never edits or deletes an update that is not on the item, and replies only
   assert.ok(!fake.names().includes('WriteEditUpdate'))
 })
 
-test('tags people in an update where the body names them, else at its start, and notifies each once', async () => {
+test('tags people in an update once, through mentions_list, with their names left plain in the body', async () => {
   const users = [
     { id: 10, name: 'Me <Admin>', email: 'me@team.com' },
     { id: 11, name: 'An', email: 'an@team.com' },
@@ -219,10 +219,8 @@ test('tags people in an update where the body names them, else at its start, and
     itemName: 'Withdraw'
   })
   const sent = fake.calls.find((call) => call.query.includes('mutation WriteAddUpdate'))!.variables
-  assert.equal(
-    sent.body,
-    `${tagOf(10, 'Me &lt;Admin&gt;')} ${tagOf(13, 'Lan Tran')} ${tagOf(12, 'An Nguyen')} and ${tagOf(11, 'An')}, see this.<br>@Lan Trang is not Lan`
-  )
+  // monday tags the people in mentions_list at the end of the update, so the body holds their plain names, no tag
+  assert.equal(sent.body, 'An Nguyen and An, see this.<br>@Lan Trang is not Lan')
   assert.deepEqual(sent.mentions, [
     { id: '12', type: 'User' },
     { id: '11', type: 'User' },

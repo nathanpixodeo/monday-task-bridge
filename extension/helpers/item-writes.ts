@@ -462,6 +462,20 @@ export function bodyWithMentions(host: string, html: string, people: Person[]): 
   return leading.length ? `${leading.join(' ')} ${body}` : body
 }
 
+/**
+ * The body of an update added with mentions_list. monday shows a tag for each person in that list at the end of the
+ * update, so a tag written in the body too would show twice: a "@Their Name" in the body becomes their plain name.
+ */
+export function bodyWithPlainNames(html: string, people: Person[]): string {
+  // Longer names first, so "@An" never matches inside "@An Nguyen"
+  let body = html
+  for (const person of [...people].sort((a, b) => b.name.length - a.name.length)) {
+    const written = new RegExp(`@${escapeRegExp(escapeHtml(person.name))}(?![\\p{L}\\p{N}])`, 'giu')
+    body = body.replace(written, () => escapeHtml(person.name))
+  }
+  return body
+}
+
 // ─── Updates ─────────────────────────────────────────────────────────
 
 const textOf = (value: unknown) => (typeof value === 'string' ? value : '')
@@ -529,7 +543,7 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
       if (request.attachments?.length && !attach) throw new Error('This extension cannot attach images to an update')
       const created = await graphql(host, ADD_UPDATE, {
         itemId: request.itemId,
-        body: bodyWithMentions(host, updateBody(request.body), people),
+        body: bodyWithPlainNames(updateBody(request.body), people),
         parentId: request.replyToUpdateId ?? null,
         mentions: people.length ? people.map((person) => ({ id: person.id, type: 'User' })) : null
       })
