@@ -236,6 +236,41 @@ test('the bridge relays an agent write only while "Allow writing" is on, and the
     assert.equal(failed.status, 502)
     assert.match((await failed.json() as { error: string }).error, /^Added update 904/)
     assert.equal(stagedCount(), 0)
+
+    // An edit needs new text, images, or both; mentions only tag people in new text
+    const editTarget = { op: 'edit-update', accountHost: 'team.monday.com', boardId: '123', itemId: '456', updateId: '77' }
+    for (const [extra, reason] of [
+      [{}, /Give the new text \(body\), images to add \(files\), or both/],
+      [{ files: [] }, /Give the new text/],
+      [{ files: [frame], mentions: ['me'] }, /give body with them/]
+    ] as const) {
+      const res = await send({ ...editTarget, ...extra }, adminHeaders)
+      assert.equal(res.status, 400)
+      const details = (await res.json() as { details: Array<{ message: string }> }).details
+      assert.ok(details.some((issue) => reason.test(issue.message)), JSON.stringify(details))
+    }
+
+    // An extension that would edit the text and drop the images is asked to reload, with or without new text
+    const editImages = { ...editTarget, files: [frame] }
+    for (const body of [{}, { body: 'New design' }]) {
+      const res = await send({ ...editImages, ...body }, adminHeaders)
+      assert.equal(res.status, 502)
+      assert.match((await res.json() as { error: string }).error, /^EXTENSION_UPDATE_REQUIRED: .*updates you edit/)
+    }
+    assert.equal(stagedCount(), 0)
+
+    const editing = await connect(['assignedTasks', 'boardFilter', 'writeBack', 'write', 'updateEdits', 'updateFiles', 'editUpdateFiles'], true)
+    const adding = send(editImages, adminHeaders)
+    const editWrite = await editing.nextCommand() as unknown as { requestId: string; attachments?: StagedFile[] }
+    const { attachments: editAttachments, ...editSent } = editWrite
+    assert.deepEqual(editSent, { type: 'write', requestId: editWrite.requestId, ...editTarget })
+    assert.deepEqual(editAttachments?.map((file) => file.name), ['frame.png'])
+    const imagesAdded = { ...editTarget, files: ['frame.png'] }
+    editing.ws.send(JSON.stringify({ type: 'write-result', requestId: editWrite.requestId, result: imagesAdded }))
+    const addedTo = await adding
+    assert.equal(addedTo.status, 200)
+    assert.deepEqual(await addedTo.json(), imagesAdded)
+    assert.equal(stagedCount(), 0)
   } finally {
     for (const ws of sockets) ws.close()
     await closeServer(server)

@@ -1011,8 +1011,12 @@ function summaryOf(entry: ActivityEntry): string {
       return entry.group ? `In ${entry.group}` : 'Created'
     case 'move-item':
       return entry.group ? `To ${entry.group}` : 'Moved'
-    case 'edit-update':
-      return entry.mentioned?.length ? `Edited, tagged ${entry.mentioned.length}` : 'Edited'
+    case 'edit-update': {
+      const images = entry.files?.length ? `${entry.files.length} image${entry.files.length > 1 ? 's' : ''}` : ''
+      // An edit with no new text only added images
+      if (entry.body === undefined && images) return `Added ${images}`
+      return ['Edited', entry.mentioned?.length ? `tagged ${entry.mentioned.length}` : '', images].filter(Boolean).join(', ')
+    }
     case 'delete-update':
       return 'Deleted'
     case 'write-back':

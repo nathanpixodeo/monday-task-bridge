@@ -117,6 +117,18 @@ test('an edited update logs its new text and a link; a deleted one logs the text
   assert.deepEqual(edited.mentioned, ['Nathan'])
   assert.equal(activityLabel(edited), 'Edit update')
 
+  // An edit that only added images logs them, and no text
+  const imagesOnly = writeActivity(
+    HOST,
+    { op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', attachments: [{ uploadId: 'a'.repeat(32), name: 'frame.png', mimeType: 'image/png', size: 10 }] },
+    { result: { op: 'edit-update', accountHost: HOST, boardId: '123', itemId: '456', updateId: '77', files: ['frame.png'] } },
+    null,
+    AT
+  )
+  assert.equal(imagesOnly.body, undefined)
+  assert.deepEqual(imagesOnly.files, ['frame.png'])
+  assert.equal(imagesOnly.updateUrl, `https://${HOST}/boards/123/pulses/456/posts/77`)
+
   const deleted = writeActivity(
     HOST,
     { op: 'delete-update', boardId: '123', itemId: '456', updateId: '77' },

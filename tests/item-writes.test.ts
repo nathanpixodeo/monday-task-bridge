@@ -156,6 +156,59 @@ test('edits an update or a reply on the item, with its text written as for a new
   assert.deepEqual(fake.calls.at(-1)!.variables, { id: '88', body: 'Thanks' })
 })
 
+test('adds images to an update it edits, with or without new text, and names the update when one fails', async () => {
+  const attachments = [
+    { uploadId: 'a'.repeat(32), name: 'frame.png', mimeType: 'image/png', size: 10 },
+    { uploadId: 'b'.repeat(32), name: 'mobile.png', mimeType: 'image/png', size: 20 }
+  ]
+  const uploads: string[] = []
+  const attach = async (host: string, updateId: string, file: { uploadId: string }) => {
+    uploads.push(`${host} ${updateId} ${file.uploadId}`)
+  }
+
+  // New text and images: the text is edited first, then the images are added to the same update
+  const fake = updatesFake()
+  const edited = await performWrite(fake.graphql, HOST, {
+    op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', body: 'New design', attachments
+  }, attach)
+  assert.deepEqual(edited, {
+    op: 'edit-update', accountHost: HOST, boardId: '123', itemId: '456', updateId: '77', files: ['frame.png', 'mobile.png'], itemName: 'Withdraw'
+  })
+  assert.deepEqual(fake.calls.find((entry) => entry.query.includes('mutation WriteEditUpdate'))!.variables, { id: '77', body: 'New design' })
+  assert.deepEqual(uploads, attachments.map((file) => `${HOST} 77 ${file.uploadId}`))
+
+  // Images only, to a reply: its text is left as it was
+  const imagesOnly = updatesFake()
+  const added = await performWrite(imagesOnly.graphql, HOST, {
+    op: 'edit-update', boardId: '123', itemId: '456', updateId: '88', attachments: attachments.slice(0, 1)
+  }, attach)
+  assert.deepEqual(added.files, ['frame.png'])
+  assert.equal(uploads.at(-1), `${HOST} 88 ${'a'.repeat(32)}`)
+  assert.ok(!imagesOnly.names().includes('WriteEditUpdate'))
+
+  // A failure names the update, whether its text was edited, and what was attached before it
+  const failing = async (_host: string, _updateId: string, file: { name: string }) => {
+    if (file.name === 'mobile.png') throw new Error('monday API: HTTP 413')
+  }
+  await assert.rejects(
+    performWrite(updatesFake().graphql, HOST, { op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', body: 'x', attachments }, failing),
+    { message: 'Edited update 77, but could not attach mobile.png (attached before the failure: frame.png): monday API: HTTP 413' }
+  )
+  await assert.rejects(
+    performWrite(updatesFake().graphql, HOST, { op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', attachments }, failing),
+    { message: 'Could not attach mobile.png to update 77 (attached before the failure: frame.png): monday API: HTTP 413' }
+  )
+
+  // Without a way to attach, the text is not edited either; with neither text nor images, nothing is written
+  const unchanged = updatesFake()
+  await assert.rejects(
+    performWrite(unchanged.graphql, HOST, { op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', body: 'x', attachments }),
+    /cannot attach images/
+  )
+  await assert.rejects(performWrite(unchanged.graphql, HOST, { op: 'edit-update', boardId: '123', itemId: '456', updateId: '77' }), /Give the new text/)
+  assert.ok(!unchanged.names().includes('WriteEditUpdate'))
+})
+
 test('deletes an update or a reply on the item, and hands back the text it had', async () => {
   const fake = updatesFake()
   const deleted = await performWrite(fake.graphql, HOST, { op: 'delete-update', boardId: '123', itemId: '456', updateId: '77' })

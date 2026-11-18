@@ -181,10 +181,14 @@ export type WriteRequest = { accountHost?: string } & (
       itemId: string
       /** An update or a reply on the item. */
       updateId: string
-      /** The new text; it replaces the whole update. */
-      body: string
+      /** The new text; it replaces the whole update. Without it the text stays and only `files` are added. */
+      body?: string
       /** People to tag in the new text; edit_update cannot notify them again. */
       mentions?: string[]
+      /** Absolute paths of local images to add to the update, as the agent gives them; the bridge never passes them on. */
+      files?: string[]
+      /** The images the bridge holds for this update, to fetch from it and attach; set by the bridge only. */
+      attachments?: StagedFile[]
     }
   | { op: 'delete-update'; boardId: string; itemId: string; updateId: string }
 )
@@ -201,7 +205,7 @@ export interface WriteResult {
   deletedBody?: string
   /** The names of the people tagged in the update, for add-update. */
   mentioned?: string[]
-  /** The names of the images attached to the update, for add-update. */
+  /** The names of the images attached to the update, for add-update and edit-update. */
   files?: string[]
   /** The titles of the columns set, for update-item and create-item. */
   columnsSet?: string[]

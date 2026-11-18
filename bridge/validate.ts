@@ -366,8 +366,9 @@ export const WriteBodySchema = z.discriminatedUnion('op', [
     boardId: ItemIdSchema,
     itemId: ItemIdSchema,
     updateId: ItemIdSchema,
-    body: z.string().trim().min(1).max(20_000),
+    body: z.string().trim().min(1).max(20_000).optional(),
     mentions: NameListSchema.optional(),
+    files: z.array(z.string().trim().min(1).max(1024)).max(10).optional(),
   }).strict(),
   z.object({
     op: z.literal('delete-update'),
@@ -378,6 +379,10 @@ export const WriteBodySchema = z.discriminatedUnion('op', [
   }).strict(),
 ]).refine((body) => !(body.op === 'create-item' && body.parentItemId !== undefined && body.group !== undefined), {
   message: 'A subitem goes under its parent item: parentItemId and group cannot be combined',
+}).refine((body) => !(body.op === 'edit-update' && body.body === undefined && !body.files?.length), {
+  message: 'Give the new text (body), images to add (files), or both',
+}).refine((body) => !(body.op === 'edit-update' && body.body === undefined && body.mentions?.length), {
+  message: 'mentions tag people in the new text: give body with them',
 })
 
 export const WriteResultSchema = z.object({

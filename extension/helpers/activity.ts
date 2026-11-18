@@ -28,7 +28,7 @@ export interface ActivityEntry {
   replyTo?: string
   /** The names of the people tagged in the update. */
   mentioned?: string[]
-  /** The names of the images attached to the update added. */
+  /** The names of the images attached to the update added or edited. */
   files?: string[]
   /** The columns set, with the values as the agent gave them. */
   columns?: Array<{ title: string; value: string }>
@@ -133,9 +133,13 @@ export function writeActivity(
     case 'edit-update':
       return {
         ...entry,
-        body: cut(request.body),
+        // Absent when the edit only added images
+        ...(request.body !== undefined ? { body: cut(request.body) } : {}),
         updateUrl: `${url}/posts/${request.updateId}`,
-        ...(result?.mentioned?.length ? { mentioned: result.mentioned } : request.mentions?.length ? { mentioned: request.mentions } : {})
+        ...(result?.mentioned?.length ? { mentioned: result.mentioned } : request.mentions?.length ? { mentioned: request.mentions } : {}),
+        ...(result?.files?.length
+          ? { files: result.files }
+          : request.attachments?.length ? { files: request.attachments.map((file) => file.name) } : {})
       }
     case 'delete-update':
       // The deleted text stays in the log, so the user can post it again; a failed delete keeps a link to the update

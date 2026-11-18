@@ -449,15 +449,21 @@ const UPDATE_EDIT_OPS: ReadonlySet<WriteRequest['op']> = new Set(['edit-update',
 
 /** The write as the extension gets it: the image paths stay in the bridge, and the images it holds go in their place. */
 function toExtension(request: WriteRequest, attachments: readonly StagedFile[]): WriteRequest {
-  if (request.op !== 'add-update') return request
-  const { files: _paths, attachments: _unused, ...rest } = request
-  return attachments.length ? { ...rest, attachments: [...attachments] } : rest
+  if (request.op === 'add-update') {
+    const { files: _paths, attachments: _unused, ...rest } = request
+    return attachments.length ? { ...rest, attachments: [...attachments] } : rest
+  }
+  if (request.op === 'edit-update') {
+    const { files: _paths, attachments: _unused, ...rest } = request
+    return attachments.length ? { ...rest, attachments: [...attachments] } : rest
+  }
+  return request
 }
 
 /**
  * Ask the extension to do one write an agent asked for. Refused here while "Allow writing" is off in the popup; the
  * extension checks the switch again before it writes. Never retried. `attachments` are the images staged for an
- * add-update (uploads.ts).
+ * add-update or edit-update (uploads.ts).
  */
 export async function requestWrite(
   request: WriteRequest,
@@ -476,6 +482,13 @@ export async function requestWrite(
   // An older extension would post the update and drop the images
   if (target && attachments.length > 0 && !target.capabilities?.includes('updateFiles')) {
     return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to attach images to monday updates'))
+  }
+  // An extension without it would edit the text and drop the images, or fail on an edit with no text
+  if (
+    target && request.op === 'edit-update' && (attachments.length > 0 || request.body === undefined) &&
+    !target.capabilities?.includes('editUpdateFiles')
+  ) {
+    return Promise.reject(new Error('EXTENSION_UPDATE_REQUIRED: Reload Monday Task Bridge in chrome://extensions to add images to monday updates you edit'))
   }
   if (target && target.writeEnabled !== true) return Promise.reject(new WriteDisabledError())
   const sent = toExtension(request, attachments)
@@ -908,7 +921,7 @@ async function handleWrite(req: http.IncomingMessage, res: http.ServerResponse):
 
   // Every image is read and checked before anything is written, so a bad path never leaves a bare update behind
   let attachments: StagedFile[] = []
-  if (request.op === 'add-update' && request.files?.length) {
+  if ((request.op === 'add-update' || request.op === 'edit-update') && request.files?.length) {
     try {
       attachments = await stageFiles(request.files)
     } catch (err: unknown) {

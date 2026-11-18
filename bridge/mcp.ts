@@ -11,7 +11,7 @@
  *   monday_update_item      – set column values: status, tags, people, dates, text, numbers, ...
  *   monday_create_item      – create an item on a board, or a subitem under an item
  *   monday_move_item        – move an item to another group
- *   monday_edit_update      – replace the text of an update or reply
+ *   monday_edit_update      – replace the text of an update or reply, or add images to it
  *   monday_delete_update    – delete an update or reply (destructive; agent CLIs always ask)
  *   monday_write_back      – add an update (and set the status) on one item; only with MONDAY_BRIDGE_ALLOW_WRITE=1
  *   monday_get_task         – retrieve stored snapshot (optional boardId/itemId)
@@ -376,17 +376,23 @@ mcp.tool(
 
 mcp.tool(
   'monday_edit_update',
-  'Replace the text of one update (or reply) on a monday item; monday decides whether this account may edit it. ' +
-    'The new text replaces the whole update, written as with monday_add_update. People in mentions are tagged where ' +
-    'the body writes "@Their Full Name", but monday does not notify them again.' + WRITES_NOTE,
+  'Replace the text of one update (or reply) on a monday item, add images to it, or both; monday decides whether ' +
+    'this account may edit it. Give body, files, or both. The new text replaces the whole update, written as with ' +
+    'monday_add_update; images pasted into the old text are lost. People in mentions are tagged where the body writes ' +
+    '"@Their Full Name", but monday does not notify them again. Leave body out to keep the text and only add images. ' +
+    'files are added after the images the update has: monday cannot remove or replace an image on an update, so to ' +
+    'replace one, delete the update and add it again (people tagged in it are notified again). PNG, JPEG, GIF or WebP ' +
+    'only, up to 20 MB each.' + WRITES_NOTE,
   {
     accountHost: accountHostArg,
     boardId: z.string().describe('The board of the item'),
     itemId: z.string().describe('The item the update is on'),
     updateId: z.string().describe('The update or reply to edit'),
-    body: z.string().describe('The new text of the update'),
+    body: z.string().optional().describe('The new text of the update; leave it out to keep the text and only add files'),
     mentions: z.array(z.string()).optional()
       .describe('People to tag in the new text: "me", user ids, emails, or full names (a name must match exactly one user)'),
+    files: z.array(z.string()).max(MAX_UPLOAD_FILES).optional()
+      .describe('Absolute paths of local PNG, JPEG, GIF or WebP images to add to the update, in this order'),
   },
   async (args) => writeVia({ op: 'edit-update', ...args })
 )

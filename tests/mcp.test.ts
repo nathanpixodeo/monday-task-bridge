@@ -50,6 +50,10 @@ test('MCP exposes cached task and original image with no monday API token', { ti
     // An update can carry images, named by their paths
     const addUpdate = tools.tools.find(tool => tool.name === 'monday_add_update')
     assert.ok(addUpdate && 'files' in (addUpdate.inputSchema.properties ?? {}))
+    // An edit can add images with no new text
+    const editUpdate = tools.tools.find(tool => tool.name === 'monday_edit_update')
+    assert.ok(editUpdate && 'files' in (editUpdate.inputSchema.properties ?? {}))
+    assert.deepEqual(editUpdate.inputSchema.required?.sort(), ['boardId', 'itemId', 'updateId'])
 
     const task = await client.callTool({ name: 'monday_get_task', arguments: {} })
     assert.equal(task.isError, undefined)

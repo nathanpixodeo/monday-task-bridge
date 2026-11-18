@@ -509,8 +509,17 @@ export type PerformedWrite = WriteResult & { itemName?: string }
 /** Uploads one image the bridge holds to an update; the caller supplies the session-authenticated upload. */
 export type AttachFile = (host: string, updateId: string, file: StagedFile) => Promise<void>
 
-/** Attaches the images to the update just added, in order; a failure names the update and what was attached. */
-async function attachFiles(attach: AttachFile, host: string, updateId: string | null, files: StagedFile[]): Promise<string[]> {
+/**
+ * Attaches the images to an update, in order. `written` says what was already done to the update's text, so a
+ * failure names the update, that change, and the images attached before it.
+ */
+async function attachFiles(
+  attach: AttachFile,
+  host: string,
+  updateId: string | null,
+  files: StagedFile[],
+  written: 'Added' | 'Edited' | null
+): Promise<string[]> {
   // The id goes into the upload's query as it is, so it must be digits only
   if (updateId === null || !/^\d{1,20}$/.test(updateId)) throw new Error('monday did not say which update it added, so no image was attached')
   const attached: string[] = []
@@ -519,7 +528,11 @@ async function attachFiles(attach: AttachFile, host: string, updateId: string | 
       await attach(host, updateId, file)
     } catch (err) {
       const done = attached.length ? ` (attached before the failure: ${attached.join(', ')})` : ''
-      throw new Error(`Added update ${updateId}, but could not attach ${file.name}${done}: ${reasonOf(err)}`)
+      throw new Error(
+        written
+          ? `${written} update ${updateId}, but could not attach ${file.name}${done}: ${reasonOf(err)}`
+          : `Could not attach ${file.name} to update ${updateId}${done}: ${reasonOf(err)}`
+      )
     }
     attached.push(file.name)
   }
@@ -530,7 +543,7 @@ const named = (name: string | undefined) => (name ? { itemName: name } : {})
 
 /**
  * Does one write an agent asked for; nothing is retried, so a failure is reported as it happened. `attach` uploads
- * the images of an add-update.
+ * the images of an add-update or edit-update.
  */
 export async function performWrite(graphql: Graphql, host: string, request: WriteRequest, attach?: AttachFile): Promise<PerformedWrite> {
   switch (request.op) {
@@ -548,7 +561,7 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
         mentions: people.length ? people.map((person) => ({ id: person.id, type: 'User' })) : null
       })
       const updateId = idOf((created as { create_update?: { id?: unknown } | null } | null)?.create_update?.id)
-      const files = request.attachments?.length && attach ? await attachFiles(attach, host, updateId, request.attachments) : []
+      const files = request.attachments?.length && attach ? await attachFiles(attach, host, updateId, request.attachments, 'Added') : []
       return {
         op: request.op,
         accountHost: host,
@@ -618,9 +631,16 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
     case 'edit-update': {
       const target = await readTarget(graphql, host, request.boardId, request.itemId)
       await readUpdateOn(graphql, host, request.itemId, request.updateId, true)
+      const body = request.body
+      const images = request.attachments ?? []
+      if (body === undefined && images.length === 0) throw new Error('Give the new text of the update, images to add, or both')
+      if (images.length && !attach) throw new Error('This extension cannot attach images to an update')
       // Resolved before the edit, so a name that matches no one leaves the update as it was
-      const people = request.mentions?.length ? await mentionedPeople(graphql, host, request.boardId, request.mentions) : []
-      await graphql(host, EDIT_UPDATE, { id: request.updateId, body: bodyWithMentions(host, updateBody(request.body), people) })
+      const people = body !== undefined && request.mentions?.length ? await mentionedPeople(graphql, host, request.boardId, request.mentions) : []
+      if (body !== undefined) {
+        await graphql(host, EDIT_UPDATE, { id: request.updateId, body: bodyWithMentions(host, updateBody(body), people) })
+      }
+      const files = images.length && attach ? await attachFiles(attach, host, request.updateId, images, body !== undefined ? 'Edited' : null) : []
       return {
         op: request.op,
         accountHost: host,
@@ -628,6 +648,7 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
         itemId: request.itemId,
         updateId: request.updateId,
         ...(people.length ? { mentioned: people.map((person) => person.name) } : {}),
+        ...(files.length ? { files } : {}),
         ...named(target.name)
       }
     }
