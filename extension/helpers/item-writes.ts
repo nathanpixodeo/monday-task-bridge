@@ -21,12 +21,12 @@ const ITEM_QUERY = `query WriteItem($ids: [ID!]) {
 }`
 
 const UPDATE_QUERY = `query WriteUpdateOf($ids: [ID!]) {
-  updates(ids: $ids) { id item_id text_body }
+  updates(ids: $ids) { id item_id text_body body }
 }`
 
 // A reply is not always found by its id among updates; it is among its item's updates' replies
 const ITEM_UPDATES_QUERY = `query WriteItemUpdates($ids: [ID!]) {
-  items(ids: $ids) { updates(limit: 100) { id replies { id text_body } } }
+  items(ids: $ids) { updates(limit: 100) { id replies { id text_body body } } }
 }`
 
 const EDIT_UPDATE = `mutation WriteEditUpdate($id: ID!, $body: String!) {
@@ -463,6 +463,14 @@ export function bodyWithMentions(host: string, html: string, people: Person[]): 
 }
 
 /**
+ * The images written in an update's HTML, in order and as written: monday's editor puts an image pasted into an
+ * update there as an <img> tag. A ">" inside a quoted attribute does not end the tag.
+ */
+export function imagesIn(html: string): string[] {
+  return html.match(/<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi) ?? []
+}
+
+/**
  * The body of an update added with mentions_list. monday shows a tag for each person in that list at the end of the
  * update, so a tag written in the body too would show twice: a "@Their Name" in the body becomes their plain name.
  */
@@ -480,21 +488,29 @@ export function bodyWithPlainNames(html: string, people: Person[]): string {
 
 const textOf = (value: unknown) => (typeof value === 'string' ? value : '')
 
+/** An update's plain text, and its HTML as monday stores it. */
+interface UpdateContent {
+  text: string
+  html: string
+}
+
+const contentOf = (update: Record<string, unknown>): UpdateContent => ({ text: textOf(update.text_body), html: textOf(update.body) })
+
 /**
- * The plain text of an update on the item, checked before anything is written to it. With `replies`, a reply to one
- * of the item's updates counts too. An update on another item, or none, is not a target.
+ * The text and HTML of an update on the item, checked before anything is written to it. With `replies`, a reply to
+ * one of the item's updates counts too. An update on another item, or none, is not a target.
  */
-async function readUpdateOn(graphql: Graphql, host: string, itemId: string, updateId: string, replies: boolean): Promise<string> {
+async function readUpdateOn(graphql: Graphql, host: string, itemId: string, updateId: string, replies: boolean): Promise<UpdateContent> {
   const data = await graphql(host, UPDATE_QUERY, { ids: [updateId] })
   const update = ((data as { updates?: unknown[] } | null)?.updates ?? [])[0]
   if (isRecord(update)) {
-    if (idOf(update.item_id) === itemId) return textOf(update.text_body)
+    if (idOf(update.item_id) === itemId) return contentOf(update)
   } else if (replies) {
     const items = await graphql(host, ITEM_UPDATES_QUERY, { ids: [itemId] })
     const item = ((items as { items?: unknown[] } | null)?.items ?? [])[0]
     for (const parent of isRecord(item) && Array.isArray(item.updates) ? item.updates : []) {
       for (const reply of isRecord(parent) && Array.isArray(parent.replies) ? parent.replies : []) {
-        if (isRecord(reply) && idOf(reply.id) === updateId) return textOf(reply.text_body)
+        if (isRecord(reply) && idOf(reply.id) === updateId) return contentOf(reply)
       }
     }
   }
@@ -630,7 +646,7 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
 
     case 'edit-update': {
       const target = await readTarget(graphql, host, request.boardId, request.itemId)
-      await readUpdateOn(graphql, host, request.itemId, request.updateId, true)
+      const current = await readUpdateOn(graphql, host, request.itemId, request.updateId, true)
       const body = request.body
       const images = request.attachments ?? []
       if (body === undefined && images.length === 0) throw new Error('Give the new text of the update, images to add, or both')
@@ -638,7 +654,11 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
       // Resolved before the edit, so a name that matches no one leaves the update as it was
       const people = body !== undefined && request.mentions?.length ? await mentionedPeople(graphql, host, request.boardId, request.mentions) : []
       if (body !== undefined) {
-        await graphql(host, EDIT_UPDATE, { id: request.updateId, body: bodyWithMentions(host, updateBody(body), people) })
+        // The new text replaces the update's HTML; the images pasted into it stay, after the new text, as monday's
+        // editor keeps them when the text is changed by hand
+        const kept = imagesIn(current.html)
+        const html = bodyWithMentions(host, updateBody(body), people) + kept.map((image) => `<br>${image}`).join('')
+        await graphql(host, EDIT_UPDATE, { id: request.updateId, body: html })
       }
       const files = images.length && attach ? await attachFiles(attach, host, request.updateId, images, body !== undefined ? 'Edited' : null) : []
       return {
@@ -655,7 +675,7 @@ export async function performWrite(graphql: Graphql, host: string, request: Writ
 
     case 'delete-update': {
       const target = await readTarget(graphql, host, request.boardId, request.itemId)
-      const deletedBody = await readUpdateOn(graphql, host, request.itemId, request.updateId, true)
+      const { text: deletedBody } = await readUpdateOn(graphql, host, request.itemId, request.updateId, true)
       await graphql(host, DELETE_UPDATE, { id: request.updateId })
       return {
         op: request.op,

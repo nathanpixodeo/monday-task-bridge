@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Graphql } from '../extension/helpers/assigned-tasks.js'
-import { performWrite, WriteTargetError } from '../extension/helpers/item-writes.js'
+import { imagesIn, performWrite, WriteTargetError } from '../extension/helpers/item-writes.js'
 
 interface Call {
   host: string
@@ -121,17 +121,27 @@ const tagOf = (id: number, name: string) =>
   `<a class="user_mention_editor router" href="https://${HOST}/users/${id}" data-mention-type="User" ` +
   `data-mention-id="${id}" target="_blank" rel="noopener noreferrer">@${name}</a>`
 
-/** Update 77 is on item 456, reply 88 answers it, and update 99 is on another item. */
-function updatesFake() {
+/** An image as monday's editor writes it into an update; the ">" in its alt does not end the tag. */
+const pasted = (asset: number) =>
+  `<img src="https://${HOST}/protected_static/1/resources/${asset}/shot.png" alt="before > after" data-asset-id="${asset}">`
+
+/**
+ * Update 77 is on item 456, reply 88 answers it, and update 99 is on another item. 77 and 88 have images pasted into
+ * their text, unless `noImages`.
+ */
+function updatesFake(noImages = false) {
+  const html = (text: string, ...assets: number[]) => (noImages ? `<p>${text}</p>` : `<p>${text} ${assets.map(pasted).join('')}</p>`)
   return fakeGraphql({
     WriteItem: () => ({ items: [{ ...itemOn('123').items[0], name: 'Withdraw' }] }),
     WriteUpdateOf: (call) => {
       const id = (call.variables.ids as string[])[0]
-      if (id === '77') return { updates: [{ id, item_id: '456', text_body: 'Old text' }] }
+      if (id === '77') return { updates: [{ id, item_id: '456', text_body: 'Old text', body: html('Old text', 5, 6) }] }
       if (id === '99') return { updates: [{ id, item_id: '999', text_body: 'Elsewhere' }] }
       return { updates: [] }
     },
-    WriteItemUpdates: () => ({ items: [{ updates: [{ id: '77', replies: [{ id: '88', text_body: 'Old reply' }] }] }] }),
+    WriteItemUpdates: () => ({
+      items: [{ updates: [{ id: '77', replies: [{ id: '88', text_body: 'Old reply', body: html('Old reply', 7) }] }] }]
+    }),
     WriteMe: () => ({ me: { id: '10' } }),
     WriteUsersByName: () => ({ users: [] }),
     WriteUsersById: () => ({ users: [{ id: '10', name: 'Nathan' }] }),
@@ -141,7 +151,7 @@ function updatesFake() {
 }
 
 test('edits an update or a reply on the item, with its text written as for a new update', async () => {
-  const fake = updatesFake()
+  const fake = updatesFake(true)
   const edited = await performWrite(fake.graphql, HOST, {
     op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', body: 'Fixed <b>\n@Nathan see PR', mentions: ['me']
   })
@@ -156,6 +166,25 @@ test('edits an update or a reply on the item, with its text written as for a new
   assert.deepEqual(fake.calls.at(-1)!.variables, { id: '88', body: 'Thanks' })
 })
 
+test('keeps the images pasted into an update or a reply after its new text, as monday keeps them when edited by hand', async () => {
+  const fake = updatesFake()
+  await performWrite(fake.graphql, HOST, { op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', body: 'New\ntext' })
+  assert.deepEqual(fake.calls.at(-1)!.variables, { id: '77', body: `New<br>text<br>${pasted(5)}<br>${pasted(6)}` })
+
+  await performWrite(fake.graphql, HOST, { op: 'edit-update', boardId: '123', itemId: '456', updateId: '88', body: 'Thanks' })
+  assert.deepEqual(fake.calls.at(-1)!.variables, { id: '88', body: `Thanks<br>${pasted(7)}` })
+
+  // A delete still hands back the plain text
+  const deleted = await performWrite(fake.graphql, HOST, { op: 'delete-update', boardId: '123', itemId: '456', updateId: '77' })
+  assert.equal(deleted.deletedBody, 'Old text')
+})
+
+test('finds the image tags in an update, in order and as written', () => {
+  assert.deepEqual(imagesIn(`<p>a ${pasted(1)} b</p><IMG SRC='x.png'><imgx><p>${pasted(2)}</p>`), [pasted(1), "<IMG SRC='x.png'>", pasted(2)])
+  assert.deepEqual(imagesIn('<p>No image, only <b>text</b></p>'), [])
+  assert.deepEqual(imagesIn(''), [])
+})
+
 test('adds images to an update it edits, with or without new text, and names the update when one fails', async () => {
   const attachments = [
     { uploadId: 'a'.repeat(32), name: 'frame.png', mimeType: 'image/png', size: 10 },
@@ -167,7 +196,7 @@ test('adds images to an update it edits, with or without new text, and names the
   }
 
   // New text and images: the text is edited first, then the images are added to the same update
-  const fake = updatesFake()
+  const fake = updatesFake(true)
   const edited = await performWrite(fake.graphql, HOST, {
     op: 'edit-update', boardId: '123', itemId: '456', updateId: '77', body: 'New design', attachments
   }, attach)

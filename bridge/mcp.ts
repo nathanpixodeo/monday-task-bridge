@@ -377,12 +377,13 @@ mcp.tool(
 mcp.tool(
   'monday_edit_update',
   'Replace the text of one update (or reply) on a monday item, add images to it, or both; monday decides whether ' +
-    'this account may edit it. Give body, files, or both. The new text replaces the whole update, written as with ' +
-    'monday_add_update; images pasted into the old text are lost. People in mentions are tagged where the body writes ' +
-    '"@Their Full Name", but monday does not notify them again. Leave body out to keep the text and only add images. ' +
-    'files are added after the images the update has: monday cannot remove or replace an image on an update, so to ' +
-    'replace one, delete the update and add it again (people tagged in it are notified again). PNG, JPEG, GIF or WebP ' +
-    'only, up to 20 MB each.' + WRITES_NOTE,
+    'this account may edit it. Give body, files, or both. The new text replaces the text of the update, written as with ' +
+    'monday_add_update. People in mentions are tagged where the body writes "@Their Full Name", but monday does not ' +
+    'notify them again. The images the update has stay when its text changes, as when it is edited by hand: those ' +
+    'pasted into its text are kept after the new text. Never pass them again in files, which would add a second copy. ' +
+    'Leave body out to keep the text and only add new images. monday cannot remove or replace an image on an update, ' +
+    'so to replace one, delete the update and add it again (people tagged in it are notified again). PNG, JPEG, GIF ' +
+    'or WebP only, up to 20 MB each.' + WRITES_NOTE,
   {
     accountHost: accountHostArg,
     boardId: z.string().describe('The board of the item'),
@@ -392,7 +393,7 @@ mcp.tool(
     mentions: z.array(z.string()).optional()
       .describe('People to tag in the new text: "me", user ids, emails, or full names (a name must match exactly one user)'),
     files: z.array(z.string()).max(MAX_UPLOAD_FILES).optional()
-      .describe('Absolute paths of local PNG, JPEG, GIF or WebP images to add to the update, in this order'),
+      .describe('Absolute paths of new local PNG, JPEG, GIF or WebP images to add to the update, in this order; never the images it already has'),
   },
   async (args) => writeVia({ op: 'edit-update', ...args })
 )
